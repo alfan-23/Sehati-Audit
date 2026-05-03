@@ -1,0 +1,994 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistem Informasi & Asisten Audit Internal FKTP</title>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Marked.js for Markdown Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- html2pdf for direct PDF export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['"Inter"', 'sans-serif'] },
+                    colors: {
+                        brand: { 50: '#f0fdf4', 100: '#dcfce7', 500: '#22c55e', 600: '#16a34a', 700: '#15803d' }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background-color: #f8fafc; color: #334155; }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+        .hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        
+        /* Layout untuk mode Cetak (Print) */
+        @media print {
+            body { background-color: white; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .print-area { padding: 0; margin: 0; width: 100%; box-shadow: none; border: none; color: black; }
+            .print-area h1, .print-area h2, .print-area h3 { color: black; break-after: avoid; }
+            .print-area p, .print-area li { font-size: 12pt; line-height: 1.5; }
+        }
+        
+        /* Markdown Styles untuk Preview */
+        .prose h1 { font-size: 1.5rem; font-weight: bold; text-align: center; margin-bottom: 1.5rem; text-transform: uppercase; }
+        .prose h2 { font-size: 1.1rem; font-weight: bold; margin-top: 1.5rem; margin-bottom: 0.5rem; text-transform: uppercase; border-bottom: 1px solid #e2e8f0; padding-bottom: 0.5rem; }
+        .prose h3 { font-size: 1rem; font-weight: 600; margin-top: 1rem; margin-bottom: 0.25rem; }
+        .prose p { margin-bottom: 0.75rem; text-align: justify; }
+        .prose ul { list-style-type: disc; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+        .prose ol { list-style-type: decimal; padding-left: 1.5rem; margin-bottom: 0.75rem; }
+        .prose li { margin-bottom: 0.25rem; }
+        .prose table { width: 100%; border-collapse: collapse; margin-bottom: 1rem; font-size: 0.875rem; }
+        .prose th { background-color: #f1f5f9; padding: 0.5rem; border: 1px solid #cbd5e1; text-align: left; }
+        .prose td { padding: 0.5rem; border: 1px solid #cbd5e1; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        
+        // --- KONFIGURASI API KEY CANVAS ---
+        const apiKey = ""; // Otomatis terisi di lingkungan Canvas
+        
+        // --- DATABASE HIRARKI ILP ---
+        const ilpHierarchy = {
+            "KLASTER 1: MANAJEMEN": {
+                "Program 1: Penyelenggaraan Manajemen Puskesmas": {
+                    "Kegiatan: Perencanaan (P1)": ["1. Tim Perencanaan Puskesmas", "2. Analisis Situasi & SMD", "3. Perumusan Masalah", "4. Penyusunan RUK & RPK"],
+                    "Kegiatan: Penggerakan (P2)": ["1. Lokakarya Mini Bulanan", "2. Lokakarya Mini Tribulanan"],
+                    "Kegiatan: Penilaian Kinerja (P3)": ["1. Audit Internal & Supervisi", "2. Tinjauan Manajemen", "3. Penilaian Kinerja (PKP)"]
+                },
+                "Program 2: Pengelolaan Sumber Daya": {
+                    "Kegiatan: Keuangan": ["1. Penyusunan RKA", "2. Penatausahaan Keuangan", "3. Verifikasi & SPJ"],
+                    "Kegiatan: SDM": ["1. Administrasi Kepegawaian", "2. Analisis Beban Kerja", "3. Pengembangan Kompetensi"],
+                    "Kegiatan: Aset & Sarpras": ["1. Inventarisasi Aset", "2. Pemeliharaan Rutin", "3. Kalibrasi Alat"],
+                    "Kegiatan: Farmasi & BMHP": ["1. Perencanaan LPLPO", "2. Penerimaan & Penyimpanan", "3. Pendistribusian"]
+                },
+                "Program 3: Penyelenggaraan PMKP": {
+                    "Kegiatan: Perencanaan Mutu": ["1. Area Prioritas Klinis", "2. Indikator Mutu (INM/IMPP)"],
+                    "Kegiatan: Peningkatan Kinerja": ["1. Validasi Data Internal", "2. PDSA/PDCA"],
+                    "Kegiatan: Manajemen Risiko": ["1. Identifikasi Risiko", "2. Register Risiko", "3. FMEA"],
+                    "Kegiatan: Keselamatan Pasien": ["1. Monitoring 6 SKP", "2. Pelaporan IKP", "3. Investigasi & RCA"],
+                    "Kegiatan: PPI": ["1. Kewaspadaan Standar", "2. Surveilans HAIs", "3. Bundles PPI"],
+                    "Kegiatan: K3": ["1. Pemeriksaan Pegawai", "2. Penanganan Kecelakaan Kerja", "3. Penyediaan APD"],
+                    "Kegiatan: MFK": ["1. Keamanan Fasilitas", "2. Manajemen B3 & Limbah", "3. Manajemen Utilitas & APAR"]
+                },
+                "Program 4: Sistem Informasi": {
+                    "Kegiatan: Manajemen SI": ["1. SIMPUS & ASIK", "2. Validasi SatuSehat", "3. PWS Dashboard"]
+                }
+            },
+            "KLASTER 2: IBU DAN ANAK": {
+                "Program 1: Kes Ibu Hamil, Bersalin, Nifas": {
+                    "Kegiatan: ANC Terpadu": ["1. Pemeriksaan 10T", "2. Skrining Triple Eliminasi", "3. USG Dokter"],
+                    "Kegiatan: Kelas Ibu Hamil": ["1. Edukasi & Senam Hamil"],
+                    "Kegiatan: Persalinan Normal": ["1. Pertolongan Persalinan", "2. Stabilisasi Rujukan Ibu"],
+                    "Kegiatan: Pelayanan Nifas": ["1. Pelayanan KF 1-4", "2. KB Pasca Salin"]
+                },
+                "Program 2: Kes Balita & Pra Sekolah": {
+                    "Kegiatan: Neonatal Esensial": ["1. Kunjungan KN 1-3", "2. Skrining Hipotiroid (SHK)"],
+                    "Kegiatan: Tumbuh Kembang": ["1. Pemantauan SDIDTK", "2. Pemantauan Gizi (Stunting)"],
+                    "Kegiatan: Imunisasi Rutin": ["1. Imunisasi Dasar Bayi", "2. Imunisasi Lanjutan"]
+                },
+                "Program 3: Kes Anak Sekolah & Remaja": {
+                    "Kegiatan: Skrining Anak Sekolah": ["1. Penjaringan Kesehatan", "2. Imunisasi BIAS"],
+                    "Kegiatan: Pelayanan Remaja": ["1. PKPR", "2. TTD Remaja Putri"]
+                }
+            },
+            "KLASTER 3: USIA DEWASA DAN LANJUT USIA": {
+                "Program 1: Kes Dewasa & Lansia": {
+                    "Kegiatan: Skrining PTM": ["1. Obesitas & Hipertensi", "2. Diabetes Melitus", "3. Kanker (SADANIS/IVA)", "4. Skrining Jiwa"],
+                    "Kegiatan: Penyakit Menular": ["1. Skrining TBC", "2. Malaria & IMS"]
+                },
+                "Program 2: Kes Khusus Dewasa": {
+                    "Kegiatan: Reproduksi & Catin": ["1. Pelayanan Catin", "2. Skrining Layak Hamil"],
+                    "Kegiatan: Pekerja": ["1. Penyakit Akibat Kerja (PAK)"]
+                },
+                "Program 3: Kes Khusus Lansia": {
+                    "Kegiatan: Pelayanan Geriatri": ["1. Skrining ICOPE", "2. Perawatan Lansia Ketergantungan"]
+                }
+            },
+            "KLASTER 4: PENYAKIT MENULAR": {
+                "Program 1: Surveilans": {
+                    "Kegiatan: Pemantauan Data": ["1. Analisis PWS", "2. Pelaporan SKDR < 24 Jam"]
+                },
+                "Program 2: Pengendalian & Respon": {
+                    "Kegiatan: Pelacakan & KLB": ["1. Pelacakan Kontak (PE)", "2. Respon KLB & Imunisasi ORI"],
+                    "Kegiatan: Kesling": ["1. Inspeksi Kesling (IKL)", "2. Pengendalian Vektor"]
+                }
+            },
+            "LINTAS KLASTER": {
+                "Program 1: Gawat Darurat": {
+                    "Kegiatan: IGD": ["1. Triase", "2. Resusitasi & Stabilisasi", "3. Rujukan Definitif"]
+                },
+                "Program 2: Kefarmasian": {
+                    "Kegiatan: Farmasi Klinis": ["1. Pelayanan Resep", "2. PIO & Konseling", "3. Pemantauan MESO"]
+                },
+                "Program 3: Laboratorium": {
+                    "Kegiatan: Pemeriksaan Lab": ["1. Pengambilan Spesimen", "2. Pemeriksaan Klinis", "3. Mutu Lab (PMI/PME)"]
+                }
+            }
+        };
+
+        // --- SISTEM PUSAT AI DENGAN EXPONENTIAL BACKOFF & ERROR HANDLING ---
+        const callGeminiAPI = async (textPrompt, additionalParts = [], useSearch = false) => {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            
+            const parts = [{ text: textPrompt }, ...additionalParts];
+            const body = { contents: [{ parts }] };
+            if (useSearch) body.tools = [{ google_search: {} }];
+
+            const delays = [1000, 2000, 4000, 8000, 16000];
+            let lastError = null;
+
+            for (let i = 0; i < 6; i++) {
+                try {
+                    const response = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(body)
+                    });
+
+                    let data;
+                    try {
+                        data = await response.json();
+                    } catch (err) {
+                        throw new Error(`Gagal membaca respons dari server. Status: ${response.status}`);
+                    }
+
+                    if (!response.ok) {
+                        throw new Error(data.error?.message || `HTTP Error: ${response.status}`);
+                    }
+
+                    if (data.candidates && data.candidates[0]) {
+                        return data.candidates[0].content?.parts?.[0]?.text || "";
+                    }
+                    
+                    throw new Error("Format respons tidak dikenali dari AI. Silakan coba lagi.");
+                } catch (error) {
+                    lastError = error;
+                    // Berhenti mencoba jika error berkaitan dengan autentikasi
+                    if (error.message.includes('API key not valid') || error.message.includes('API key is invalid') || error.message.includes('400')) {
+                        throw new Error("API Key internal tidak valid atau kuota habis.");
+                    }
+                    
+                    if (i < 5) {
+                        console.log(`Percobaan AI ${i + 1} gagal. Menunggu ${delays[i]}ms...`);
+                        await new Promise(res => setTimeout(res, delays[i]));
+                    }
+                }
+            }
+            throw new Error(`Gagal memuat AI setelah beberapa percobaan: ${lastError?.message || 'Tidak diketahui'}`);
+        };
+
+        const App = () => {
+            const [activeTahap, setActiveTahap] = useState('tahap1');
+            const [activeSubMenu, setActiveSubMenu] = useState('kak_komprehensif'); 
+            const [toastMsg, setToastMsg] = useState('');
+            const [isPrinting, setIsPrinting] = useState(false);
+
+            // State Utama Data
+            const [formDataKAK, setFormDataKAK] = useState({
+                namaFaskes: 'Puskesmas XYZ', tahun: '2026', latarBelakangTerpadu: '', lingkupAudit: []
+            });
+
+            // State Input Unit & Kriteria
+            const [selKlaster, setSelKlaster] = useState('');
+            const [selProgram, setSelProgram] = useState('');
+            const [selKegiatan, setSelKegiatan] = useState('');
+            const [selSubKegiatan, setSelSubKegiatan] = useState('');
+            const [selInfoTambahan, setSelInfoTambahan] = useState('');
+            const [selMasalahSpesifik, setSelMasalahSpesifik] = useState('');
+            
+            const [kriteriaArahan, setKriteriaArahan] = useState('');
+            const [aiKriteriaList, setAiKriteriaList] = useState([]);
+            const [selectedKriteria, setSelectedKriteria] = useState([]);
+            const [selStandarManual, setSelStandarManual] = useState('');
+            const [selMetode, setSelMetode] = useState(['Wawancara', 'Observasi', 'Telaah Dokumen']);
+            const [selInstrumen, setSelInstrumen] = useState('');
+
+            // Loading States
+            const [loadingUnit, setLoadingUnit] = useState(false);
+            const [loadingKriteria, setLoadingKriteria] = useState(false);
+            const [loadingInstrumen, setLoadingInstrumen] = useState(false); 
+            const [loadingInstrumenIdx, setLoadingInstrumenIdx] = useState(null); 
+            const [loadingTerpadu, setLoadingTerpadu] = useState(false);
+            const [loadingKAK, setLoadingKAK] = useState(false);
+
+            // State Dokumen KAK
+            const [kakParts, setKakParts] = useState({ part1: '', part2: '', part3: '' });
+            const [selectedPart, setSelectedPart] = useState('part1');
+            const [customPromptKAK, setCustomPromptKAK] = useState('');
+
+            const docPreview = [kakParts.part1, kakParts.part2, kakParts.part3].filter(Boolean).join('\n\n');
+
+            const isReadyToTambah = selKlaster && selProgram && selKegiatan && selSubKegiatan && selMasalahSpesifik.trim();
+
+            const resetFormInputs = () => {
+                setSelSubKegiatan(''); setSelInfoTambahan(''); setSelMasalahSpesifik('');
+                setKriteriaArahan(''); setAiKriteriaList([]); setSelectedKriteria([]); setSelStandarManual('');
+                setSelMetode(['Wawancara', 'Observasi', 'Telaah Dokumen']); setSelInstrumen('');
+            };
+
+            const showAlert = (msg) => setToastMsg(msg);
+
+            const handleKlasterChange = (e) => { setSelKlaster(e.target.value); setSelProgram(''); setSelKegiatan(''); resetFormInputs(); };
+            const handleProgramChange = (e) => { setSelProgram(e.target.value); setSelKegiatan(''); resetFormInputs(); };
+            const handleKegiatanChange = (e) => { setSelKegiatan(e.target.value); resetFormInputs(); };
+
+            // AI 1: Masalah Unit
+            const handleAutoFillUnit = async () => {
+                if (!selKegiatan || !selSubKegiatan) return showAlert("Pilih 'Kegiatan' dan 'Sub Kegiatan' terlebih dahulu.");
+                setLoadingUnit(true);
+                const infoContext = selInfoTambahan.trim() !== '' ? `\nInformasi Tambahan/Temuan: ${selInfoTambahan}` : '';
+                const prompt = `Sebagai auditor mutu Puskesmas, buatkan 1 paragraf ringkas latar belakang MASALAH SPESIFIK untuk audit pada:\nUnit: ${selKegiatan}\nFokus: ${selSubKegiatan}${infoContext}\nLangsung tulis narasinya tanpa pengantar.`;
+
+                try {
+                    const text = await callGeminiAPI(prompt);
+                    setSelMasalahSpesifik(text.trim());
+                } catch (error) {
+                    showAlert(`Gagal menganalisa masalah:\n${error.message}`);
+                } finally { setLoadingUnit(false); }
+            };
+
+            // AI 2: Kriteria Audit (Checklist)
+            const handleGenerateKriteria = async () => {
+                if (!selSubKegiatan) return showAlert("Pilih unit terlebih dahulu.");
+                setLoadingKriteria(true);
+                const prompt = `Berikan 4-5 saran ringkas "Standar/Kriteria Acuan" (pedoman, SOP, regulasi) untuk:\nUnit: ${selKegiatan} - ${selSubKegiatan}\nMasalah: ${selMasalahSpesifik}\nArahan: ${kriteriaArahan}\nBerikan HANYA daftar dengan awalan strip (-).`;
+
+                try {
+                    const text = await callGeminiAPI(prompt);
+                    const list = text.split('\n').filter(line => line.trim().startsWith('-')).map(line => line.replace(/^-\s*/, '').trim());
+                    setAiKriteriaList(list.length > 0 ? list : text.split('\n').filter(line => line.trim().length > 0));
+                } catch (error) {
+                    showAlert(`Gagal memuat kriteria:\n${error.message}`);
+                } finally { setLoadingKriteria(false); }
+            };
+
+            const toggleKriteria = (item) => setSelectedKriteria(prev => prev.includes(item) ? prev.filter(k => k !== item) : [...prev, item]);
+            const toggleMetode = (metode) => setSelMetode(prev => prev.includes(metode) ? prev.filter(m => m !== metode) : [...prev, metode]);
+
+            // AI 3: Judul Instrumen
+            const handleGenerateInstrumen = async () => {
+                if (!selSubKegiatan || selMetode.length === 0) return showAlert("Pilih unit dan minimal 1 metode audit.");
+                setLoadingInstrumen(true);
+                const prompt = `Tentukan JUDUL Instrumen Audit untuk:\nUnit: ${selSubKegiatan}\nMetode Audit: ${selMetode.join(', ')}\nKriteria: ${[...selectedKriteria, selStandarManual].join(', ')}\nBerikan nama instrumen yang logis dan singkat dipisahkan koma.`;
+
+                try {
+                    const text = await callGeminiAPI(prompt);
+                    setSelInstrumen(text.trim());
+                } catch (error) {
+                    showAlert(`Gagal menghasilkan judul:\n${error.message}`);
+                } finally { setLoadingInstrumen(false); }
+            };
+
+            // Tambah Target
+            const tambahLingkup = () => {
+                if (!isReadyToTambah) {
+                    return showAlert("Lengkapi pilihan Unit dan isi 'Masalah Spesifik' terlebih dahulu sebelum menambah target!");
+                }
+                const finalStandar = [...selectedKriteria, selStandarManual.trim()].filter(Boolean).map(item => item.startsWith('-') ? item : `- ${item}`).join('\n');
+                const finalMetode = selMetode.join(', ');
+
+                const newItem = { 
+                    klaster: selKlaster, program: selProgram, kegiatan: selKegiatan, subKegiatan: selSubKegiatan,
+                    masalahSpesifik: selMasalahSpesifik,
+                    auditor: '', standar: finalStandar, metode: finalMetode, instrumen: selInstrumen || 'Daftar tilik ILP', 
+                    jadwalSem1: '', jadwalSem2: '', ket: '', bulanPelaksanaan: [],
+                    instrumenManual: '', instrumenFileName: '', instrumenFileMime: '', instrumenFileBase64: '', useBrowsing: false, hasilInstrumen: ''
+                };
+                
+                if (!formDataKAK.lingkupAudit.some(item => item.subKegiatan === selSubKegiatan)) {
+                    setFormDataKAK({ ...formDataKAK, lingkupAudit: [...formDataKAK.lingkupAudit, newItem] });
+                    resetFormInputs();
+                } else { showAlert('Sub Kegiatan ini sudah ada di dalam daftar target audit!'); }
+            };
+
+            const hapusLingkup = (index) => {
+                const newList = [...formDataKAK.lingkupAudit]; newList.splice(index, 1);
+                setFormDataKAK({...formDataKAK, lingkupAudit: newList});
+            };
+
+            const updateLingkupField = (index, field, value) => {
+                const newList = [...formDataKAK.lingkupAudit]; newList[index][field] = value;
+                setFormDataKAK({...formDataKAK, lingkupAudit: newList});
+            };
+
+            const toggleBulan = (idx, bulan) => {
+                const newList = [...formDataKAK.lingkupAudit];
+                const arr = newList[idx].bulanPelaksanaan || [];
+                newList[idx].bulanPelaksanaan = arr.includes(bulan) ? arr.filter(b => b !== bulan) : [...arr, bulan];
+                setFormDataKAK({...formDataKAK, lingkupAudit: newList});
+            };
+
+            // File Upload Handler
+            const handleFileChange = (idx, e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                if (file.size > 5 * 1024 * 1024) return showAlert("Ukuran file maksimal 5MB.");
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    const newList = [...formDataKAK.lingkupAudit];
+                    newList[idx].instrumenFileBase64 = reader.result;
+                    newList[idx].instrumenFileMime = file.type;
+                    newList[idx].instrumenFileName = file.name;
+                    setFormDataKAK({...formDataKAK, lingkupAudit: newList});
+                };
+                reader.readAsDataURL(file);
+            };
+
+            // AI 4: Detail Instrumen (Tabel Checklist)
+            const handleGenerateInstrumenDetail = async (idx) => {
+                const item = formDataKAK.lingkupAudit[idx];
+                setLoadingInstrumenIdx(idx);
+                
+                let promptText = `Buatkan ISI instrumen audit detail (tabel) untuk:\n- Unit: ${item.kegiatan} - ${item.subKegiatan}\n- Masalah: ${item.masalahSpesifik}\n- Kriteria: ${item.standar.replace(/\n/g, ', ')}\n- Metode: ${item.metode}\n- Judul Instrumen: ${item.instrumen}`;
+                if (item.instrumenManual) promptText += `\n\nREFERENSI INTERNAL/SOP:\n${item.instrumenManual}\nPerhatikan referensi ini.`;
+                promptText += `\n\nTUGAS: Buat format Tabel Markdown. Jika observasi/dokumen: No | Aspek (Fakta/Bukti) | Ya | Tidak | Ket. Jika wawancara: No | Pertanyaan Wawancara | Jawaban. Hasilkan langsung tabelnya.`;
+
+                const additionalParts = [];
+                if (item.instrumenFileBase64) {
+                    additionalParts.push({ inlineData: { data: item.instrumenFileBase64.split(',')[1], mimeType: item.instrumenFileMime } });
+                }
+
+                try {
+                    const text = await callGeminiAPI(promptText, additionalParts, item.useBrowsing);
+                    updateLingkupField(idx, 'hasilInstrumen', text.trim());
+                } catch (error) {
+                    showAlert(`Gagal membuat tabel instrumen:\n${error.message}`);
+                } finally { setLoadingInstrumenIdx(null); }
+            };
+
+            // AI 5: Latar Belakang KAK
+            const handleAutoFillTerpadu = async () => {
+                if (formDataKAK.lingkupAudit.length === 0) return showAlert('Tambahkan target audit terlebih dahulu dengan mengklik tombol "Tambah Target KAK" pada bagian 1 (Pemilihan Unit).');
+                setLoadingTerpadu(true);
+                const probs = formDataKAK.lingkupAudit.map(item => `Unit: ${item.subKegiatan}\nMasalah: ${item.masalahSpesifik}`).join('\n\n');
+                const prompt = `RANGKUM masalah unit berikut menjadi 1-2 paragraf "Latar Belakang KAK Audit Internal" yang terpadu.\n${probs}\nLangsung tulis narasi tanpa pengantar.`;
+
+                try {
+                    const text = await callGeminiAPI(prompt);
+                    setFormDataKAK(prev => ({ ...prev, latarBelakangTerpadu: text.trim() }));
+                } catch (error) {
+                    showAlert(`Gagal merangkum latar belakang:\n${error.message}`);
+                } finally { setLoadingTerpadu(false); }
+            };
+
+            // AI 6: KAK Per Bab
+            const handleGenerateKAKPart = async () => {
+                if(formDataKAK.lingkupAudit.length === 0 || !formDataKAK.latarBelakangTerpadu.trim()) {
+                    return showAlert('Mohon lengkapi Daftar Target (Klik "Tambah Target KAK") dan Latar Belakang Utama terlebih dahulu sebelum menyusun Bab KAK.');
+                }
+                
+                setLoadingKAK(true);
+                const tgts = formDataKAK.lingkupAudit.map((item, i) => `${i + 1}. Klaster: ${item.klaster} | Sub: ${item.subKegiatan} | Masalah: ${item.masalahSpesifik}`).join('\n');
+                let ctx = `Data:\n- Faskes: ${formDataKAK.namaFaskes}\n- Latar Belakang: ${formDataKAK.latarBelakangTerpadu}\n- Target:\n${tgts}\n`;
+                if (customPromptKAK.trim()) ctx += `\nINSTRUKSI PENGGUNA:\n"${customPromptKAK.trim()}"\n`;
+
+                let prompt = '';
+                if (selectedPart === 'part1') prompt = `Buatkan BAGIAN AWAL KAK.\n\n${ctx}\n\nSUSUN HANYA BAB BERIKUT (Markdown):\nI. Pendahuluan\nII. Latar Belakang\nIII. Tujuan Audit (Terdiri Tujuan Umum dan Tujuan Khusus. Tujuan Khusus: SATU poin ringkas per sub-kegiatan target).\nHasilkan teks utuhnya saja.`;
+                else if (selectedPart === 'part2') prompt = `Buatkan BAGIAN TENGAH KAK.\n\n${ctx}\n\nPENTING! GUNAKAN STRUKTUR TEKS INI PERSIS:\n\nIV. Kegiatan Pokok dan Rincian Kegiatan\n1. Lingkup audit (jabarkan dari target di atas):\n- Klaster 1: ...\n- Klaster 2: ...\n- Klaster 3: ...\n- Klaster 4: ...\n- Lintas Klaster: ...\n2. Objek audit:\n- Pemenuhan sumber daya\n- Kepatuhan proses terhadap SOP\n- Capaian kinerja\n- Kesesuaian standar akreditasi\n\nV. Cara Melaksanakan Kegiatan\n1. Kriteria audit:\n- Standar sumber daya\n- SOP prioritas\n- Standar kinerja\n- Standar akreditasi\n2. Metode audit: Observasi, wawancara, dan telaah dokumen.\n3. Instrumen audit:\n- Kuesioner wawancara\n- Panduan observasi\n- Check list\n\nVI. Sasaran (Objek) Audit\nDari unit kerja: (Sebutkan rincian proses yang diaudit tiap target).\nHasilkan teks utuhnya saja.`;
+                else if (selectedPart === 'part3') prompt = `Buatkan BAGIAN AKHIR KAK.\n\n${ctx}\n\nSUSUN HANYA BAB BERIKUT (Markdown):\nVII. Jadwal Pelaksanaan Kegiatan (Sebutkan rinci terlampir di Matriks Audit Plan)\nVIII. Evaluasi Pelaksanaan Kegiatan dan Pelaporan (Kapan evaluasi dan ke siapa dilaporkan)\nIX. Pencatatan, Pelaporan dan Evaluasi Kegiatan (Mekanisme form temuan dan pelaporan ke PTM).\nHasilkan teks utuhnya saja.`;
+
+                try {
+                    const text = await callGeminiAPI(prompt);
+                    setKakParts(prev => ({ ...prev, [selectedPart]: text.trim() }));
+                } catch (error) {
+                    showAlert(`Gagal menyusun Bab KAK:\n${error.message}`);
+                } finally { setLoadingKAK(false); }
+            };
+
+            // Mengganti window.print dengan html2pdf
+            const handlePrint = () => {
+                const element = document.getElementById('print-container');
+                if (!element) return showAlert("Dokumen belum siap.");
+
+                setIsPrinting(true);
+                showAlert("Menyiapkan dokumen PDF... Mohon tunggu sebentar.");
+                
+                setTimeout(() => {
+                    const opt = {
+                        margin:       15,
+                        filename:     `Audit_Internal_${activeSubMenu}_${new Date().toISOString().slice(0,10)}.pdf`,
+                        image:        { type: 'jpeg', quality: 0.98 },
+                        html2canvas:  { scale: 2, useCORS: true, logging: false },
+                        jsPDF:        { unit: 'mm', format: 'a4', orientation: activeSubMenu === 'kak_komprehensif' || activeSubMenu === 'instrumen' ? 'portrait' : 'landscape' }
+                    };
+
+                    html2pdf().set(opt).from(element).save().then(() => {
+                        setIsPrinting(false);
+                        showAlert("File PDF berhasil diunduh ke perangkat Anda.");
+                    }).catch(err => {
+                        console.error(err);
+                        setIsPrinting(false);
+                        showAlert("Gagal membuat PDF.");
+                    });
+                }, 800);
+            };
+
+            return (
+                <div className="min-h-screen flex flex-col relative bg-slate-50">
+                    {/* Kotak Pesan Toast Kustom (Sebagai pengganti alert) */}
+                    {toastMsg && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm transition-opacity">
+                            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform transition-transform scale-100">
+                                <div className="bg-brand-600 p-3 text-white font-bold flex items-center gap-2">
+                                    <i className="fas fa-info-circle"></i> Pemberitahuan
+                                </div>
+                                <div className="p-5 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">
+                                    {toastMsg}
+                                </div>
+                                <div className="p-3 bg-slate-50 border-t flex justify-end">
+                                    <button onClick={() => setToastMsg('')} className="bg-brand-600 hover:bg-brand-700 text-white px-5 py-2 rounded font-bold shadow-sm transition-colors focus:ring-2 focus:ring-brand-400 focus:outline-none">
+                                        Mengerti
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Header - No Print */}
+                    <header className="bg-slate-900 text-white shadow-md no-print sticky top-0 z-30">
+                        <div className="max-w-7xl mx-auto px-4 h-16 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-0">
+                            {/* Logo */}
+                            <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-start h-full">
+                                <div className="w-8 h-8 rounded bg-brand-500 flex items-center justify-center"><i className="fas fa-sitemap text-white"></i></div>
+                                <div><h1 className="font-bold text-lg leading-tight">AITM Workspace</h1><p className="text-[10px] text-brand-200">Audit Internal Puskesmas - ILP</p></div>
+                                <div className="ml-4 px-2 py-1 bg-green-500/20 border border-green-500/30 text-green-400 rounded text-[10px] font-bold hidden sm:flex items-center gap-1">
+                                    <i className="fas fa-check-circle"></i> AI Siap
+                                </div>
+                            </div>
+                            
+                            {/* Top Tahap Navigation */}
+                            <nav className="flex space-x-1 sm:h-full items-center">
+                                {[{ id: 'tahap1', label: 'Perencanaan', icon: 'fa-calendar' }, { id: 'tahap2', label: 'Pelaksanaan', icon: 'fa-search' }, { id: 'tahap3', label: 'Analisis RTL', icon: 'fa-chart-pie' }].map(t => (
+                                    <button key={t.id} type="button" onClick={() => setActiveTahap(t.id)} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${activeTahap === t.id ? 'bg-brand-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
+                                        <i className={`fas ${t.icon}`}></i><span className="hidden sm:inline">{t.label}</span>
+                                    </button>
+                                ))}
+                            </nav>
+                        </div>
+                    </header>
+
+                    {/* Top Horizontal Sub-Menu Bar */}
+                    {activeTahap === 'tahap1' && (
+                        <div className="bg-white border-b border-slate-200 shadow-sm no-print sticky top-16 z-20">
+                            <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto hide-scrollbar">
+                                {[{ id: 'kak_komprehensif', label: '1. Kerangka Acuan (KAK)', icon: 'fa-file-alt' }, { id: 'auditplan', label: '2. Audit Plan (Rincian)', icon: 'fa-list-ul' }, { id: 'jadwal', label: '3. Jadwal Audit', icon: 'fa-calendar-alt' }, { id: 'instrumen', label: '4. Instrumen & Check List', icon: 'fa-tasks' }].map(sub => (
+                                    <button key={sub.id} type="button" onClick={() => setActiveSubMenu(sub.id)} className={`whitespace-nowrap px-4 py-3 text-sm font-bold transition-all flex items-center gap-2 border-b-[3px] ${activeSubMenu === sub.id ? 'border-brand-500 text-brand-600 bg-brand-50/50' : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}>
+                                        <i className={`fas ${sub.icon} ${activeSubMenu === sub.id ? 'text-brand-500' : 'text-slate-400'}`}></i>{sub.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Main Workspace Area */}
+                    <div className="flex-1 flex overflow-hidden">
+                        
+                        {/* Content Workspace */}
+                        <main className="flex-1 overflow-y-auto relative p-4 sm:p-6 no-print">
+                            
+                            {/* WORKFLOW: KAK */}
+                            {activeTahap === 'tahap1' && activeSubMenu === 'kak_komprehensif' && (
+                                <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6 no-print">
+                                    {/* Left Panel */}
+                                    <div className="xl:col-span-5 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col max-h-[80vh]">
+                                        <div className="bg-slate-50 px-4 py-3 border-b border-slate-200"><h3 className="font-bold text-slate-800"><i className="fas fa-edit text-brand-500 mr-2"></i>Penyusunan KAK</h3></div>
+                                        <div className="p-4 space-y-5 overflow-y-auto flex-1 hide-scrollbar">
+                                            
+                                            <div className="grid grid-cols-2 gap-4">
+                                                <div><label className="block text-xs font-semibold text-slate-600 mb-1">Nama Faskes</label><input type="text" className="w-full p-2 bg-slate-50 border rounded text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition-colors" value={formDataKAK.namaFaskes} onChange={e => setFormDataKAK({...formDataKAK, namaFaskes: e.target.value})} /></div>
+                                                <div><label className="block text-xs font-semibold text-slate-600 mb-1">Tahun KAK</label><input type="text" className="w-full p-2 bg-slate-50 border rounded text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition-colors" value={formDataKAK.tahun} onChange={e => setFormDataKAK({...formDataKAK, tahun: e.target.value})} /></div>
+                                            </div>
+
+                                            {/* Modul Seleksi */}
+                                            <div className="p-4 border border-brand-200 bg-brand-50/30 rounded-xl shadow-sm relative overflow-hidden">
+                                                <div className="absolute top-0 right-0 bg-brand-100 text-brand-700 text-[10px] font-bold px-3 py-1 rounded-bl-lg">Wajib Diisi</div>
+                                                <label className="block text-sm font-bold text-slate-700 mb-3 border-b border-brand-100 pb-2"><i className="fas fa-layer-group text-brand-500 mr-2"></i>1. Pemilihan Unit (Inventaris)</label>
+                                                <div className="space-y-3">
+                                                    <select className="w-full p-2 bg-white border rounded text-sm outline-none focus:border-brand-500" value={selKlaster} onChange={handleKlasterChange}><option value="">-- Pilih Klaster --</option>{Object.keys(ilpHierarchy).map(kl => <option key={kl} value={kl}>{kl}</option>)}</select>
+                                                    <select className="w-full p-2 bg-white border rounded text-sm outline-none focus:border-brand-500" value={selProgram} onChange={handleProgramChange} disabled={!selKlaster}><option value="">-- Pilih Program --</option>{selKlaster && Object.keys(ilpHierarchy[selKlaster]).map(prog => <option key={prog} value={prog}>{prog}</option>)}</select>
+                                                    <select className="w-full p-2 bg-white border rounded text-sm outline-none focus:border-brand-500" value={selKegiatan} onChange={handleKegiatanChange} disabled={!selProgram}><option value="">-- Pilih Kegiatan --</option>{selKlaster && selProgram && Object.keys(ilpHierarchy[selKlaster][selProgram]).map(keg => <option key={keg} value={keg}>{keg}</option>)}</select>
+                                                    <select className="w-full p-2 bg-white border rounded text-sm font-medium outline-none focus:border-brand-500" value={selSubKegiatan} onChange={e => setSelSubKegiatan(e.target.value)} disabled={!selKegiatan}><option value="">-- Pilih Target Sub Kegiatan --</option>{selKlaster && selProgram && selKegiatan && ilpHierarchy[selKlaster][selProgram][selKegiatan].map(sub => <option key={sub} value={sub}>{sub}</option>)}</select>
+                                                </div>
+
+                                                <div className="mt-4 pt-3 border-t border-brand-100">
+                                                    <label className="block text-xs font-semibold text-slate-700 mb-1">Informasi Tambahan / Konteks <span className="text-slate-400 font-normal">(Opsional)</span></label>
+                                                    <textarea className="w-full p-2 bg-white border rounded text-xs min-h-[40px] outline-none focus:border-brand-500" value={selInfoTambahan} onChange={e => setSelInfoTambahan(e.target.value)} placeholder="Misal: Temuan Dinkes bulan lalu..."></textarea>
+                                                </div>
+
+                                                <div className="mt-3">
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <label className="block text-xs font-bold text-slate-700">Masalah Spesifik Unit</label>
+                                                        <button type="button" onClick={handleAutoFillUnit} disabled={loadingUnit} className="text-[10px] bg-amber-50 text-amber-700 font-bold border border-amber-200 px-2 py-1 rounded hover:bg-amber-100 flex gap-1 transition-colors">
+                                                            {loadingUnit ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-magic"></i>} Auto-Generate AI
+                                                        </button>
+                                                    </div>
+                                                    <textarea className="w-full p-2 bg-white border rounded text-xs min-h-[50px] shadow-inner outline-none focus:border-brand-500" value={selMasalahSpesifik} onChange={e => setSelMasalahSpesifik(e.target.value)} placeholder="Ketik masalah atau klik AI..."></textarea>
+                                                </div>
+
+                                                {/* MODUL KRITERIA */}
+                                                <div className="mt-4 pt-3 border-t border-brand-100">
+                                                    <label className="block text-xs font-bold text-slate-700 mb-2">Standar / Kriteria Acuan</label>
+                                                    <div className="flex gap-2 mb-2">
+                                                        <input type="text" className="flex-1 p-2 bg-white border rounded text-[10px] outline-none focus:border-brand-500" placeholder="Arahan AI (Cth: Regulasi PMK...)" value={kriteriaArahan} onChange={e => setKriteriaArahan(e.target.value)} />
+                                                        <button type="button" onClick={handleGenerateKriteria} disabled={loadingKriteria} className="text-[10px] bg-indigo-50 text-indigo-700 font-bold border border-indigo-200 px-2 py-1 rounded hover:bg-indigo-100 flex gap-1 whitespace-nowrap transition-colors">
+                                                            {loadingKriteria ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-list-check"></i>} Saran AI
+                                                        </button>
+                                                    </div>
+                                                    {aiKriteriaList.length > 0 && (
+                                                        <div className="bg-indigo-50/50 border border-indigo-100 p-2 rounded mb-2 max-h-[100px] overflow-y-auto">
+                                                            <span className="block text-[10px] font-bold text-indigo-800 mb-1">Pilih Kriteria (Centang):</span>
+                                                            <div className="space-y-1">
+                                                                {aiKriteriaList.map((item, idx) => (
+                                                                    <label key={idx} className="flex items-start gap-2 cursor-pointer hover:bg-white p-1 rounded">
+                                                                        <input type="checkbox" className="mt-0.5 rounded text-indigo-600" checked={selectedKriteria.includes(item)} onChange={() => toggleKriteria(item)} />
+                                                                        <span className="text-[10px] text-slate-700">{item}</span>
+                                                                    </label>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    )}
+                                                    <textarea className="w-full p-2 bg-white border rounded text-[10px] min-h-[40px] shadow-inner outline-none focus:border-brand-500" value={selStandarManual} onChange={e => setSelStandarManual(e.target.value)} placeholder="Ketik manual kriteria tambahan di sini (opsional)..."></textarea>
+                                                </div>
+
+                                                {/* MODUL METODE & INSTRUMEN */}
+                                                <div className="mt-4 pt-3 border-t border-brand-100">
+                                                    <label className="block text-xs font-bold text-slate-700 mb-2">Pilih Metode Audit</label>
+                                                    <div className="flex flex-wrap gap-2 mb-3">
+                                                        {['Wawancara', 'Observasi', 'Telaah Dokumen', 'Simulasi'].map(m => (
+                                                            <label key={m} className="flex items-center gap-1 cursor-pointer bg-slate-50 border px-2 py-1 rounded text-[10px] hover:bg-slate-100 transition-colors">
+                                                                <input type="checkbox" className="rounded text-brand-600" checked={selMetode.includes(m)} onChange={() => toggleMetode(m)} />
+                                                                <span className="text-slate-700 font-medium">{m}</span>
+                                                            </label>
+                                                        ))}
+                                                    </div>
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <label className="block text-xs font-bold text-slate-700">Judul Instrumen Audit</label>
+                                                        <button type="button" onClick={handleGenerateInstrumen} disabled={loadingInstrumen} className="text-[10px] bg-emerald-50 text-emerald-700 font-bold border border-emerald-200 px-2 py-1 rounded hover:bg-emerald-100 flex gap-1 transition-colors">
+                                                            {loadingInstrumen ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-clipboard-list"></i>} Generate Judul
+                                                        </button>
+                                                    </div>
+                                                    <textarea className="w-full p-2 bg-white border rounded text-[10px] min-h-[40px] shadow-inner outline-none focus:border-brand-500" value={selInstrumen} onChange={e => setSelInstrumen(e.target.value)} placeholder="Klik Generate Judul agar AI menyesuaikan..."></textarea>
+                                                </div>
+
+                                                <button type="button" onClick={tambahLingkup} className={`w-full py-3 mt-5 text-white rounded-lg text-sm font-bold flex justify-center items-center gap-2 transition-all duration-300 ${isReadyToTambah ? 'bg-brand-600 hover:bg-brand-700 shadow-lg shadow-brand-500/40 ring-2 ring-brand-400 ring-offset-2' : 'bg-slate-800 hover:bg-slate-700 shadow'}`}>
+                                                    <i className="fas fa-plus"></i> {isReadyToTambah ? "Simpan & Tambah Target KAK" : "Tambah Target KAK"}
+                                                </button>
+                                            </div>
+
+                                            {/* Daftar Target */}
+                                            {formDataKAK.lingkupAudit.length > 0 && (
+                                                <div className="space-y-3 pt-2">
+                                                    <label className="block text-sm font-bold text-slate-700 border-b border-slate-200 pb-2"><i className="fas fa-list-check text-brand-500 mr-2"></i>2. Daftar Target KAK ({formDataKAK.lingkupAudit.length})</label>
+                                                    <ul className="space-y-3">
+                                                        {formDataKAK.lingkupAudit.map((item, idx) => (
+                                                            <li key={idx} className="flex justify-between bg-white border p-3 rounded shadow-sm border-l-4 border-brand-500 text-xs">
+                                                                <div className="pr-2 w-full">
+                                                                    <span className="font-bold block mb-1">{item.program}</span><span className="text-slate-600 block">{item.kegiatan}</span><span className="text-slate-500 italic block">{item.subKegiatan}</span>
+                                                                    <div className="mt-2 bg-amber-50/50 p-2 rounded border border-amber-100 text-slate-700"><span className="font-bold block text-[10px] text-amber-600">Masalah:</span>{item.masalahSpesifik}</div>
+                                                                </div>
+                                                                <button type="button" onClick={() => hapusLingkup(idx)} className="text-slate-400 hover:text-red-500 p-1.5 transition-colors"><i className="fas fa-trash-alt"></i></button>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+
+                                            {/* Latar Belakang Terpadu */}
+                                            <div className="pt-4 mt-2 border-t border-slate-200">
+                                                <div className="flex justify-between items-center mb-2">
+                                                    <label className="block text-sm font-bold text-slate-700"><i className="fas fa-compress-arrows-alt text-brand-500 mr-2"></i>3. Latar Belakang Utama</label>
+                                                    <button type="button" onClick={handleAutoFillTerpadu} disabled={loadingTerpadu} className="text-xs font-bold border px-3 py-1.5 rounded-lg flex items-center gap-1 bg-brand-600 text-white hover:bg-brand-700 disabled:bg-slate-400 disabled:cursor-wait transition-colors shadow">
+                                                        {loadingTerpadu ? <i className="fas fa-spinner fa-spin"></i> : <i className="fas fa-magic"></i>} Auto-Fill AI
+                                                    </button>
+                                                </div>
+                                                <textarea className="w-full p-3 bg-white border rounded text-sm min-h-[140px] shadow-inner outline-none focus:border-brand-500" value={formDataKAK.latarBelakangTerpadu} onChange={e => setFormDataKAK({...formDataKAK, latarBelakangTerpadu: e.target.value})} placeholder="Klik 'Auto-Fill AI' merumuskan narasi latar belakang..."></textarea>
+                                            </div>
+                                            
+                                            {/* Generate Per Bab */}
+                                            <div className="pt-4 mt-2 border-t border-slate-200">
+                                                <label className="block text-sm font-bold text-slate-700 mb-2"><i className="fas fa-layer-group text-brand-500 mr-2"></i>4. Penyusunan KAK (Per Bab)</label>
+                                                <div className="space-y-3">
+                                                    <div className="bg-slate-50 p-3 rounded border">
+                                                        <label className="block text-xs font-semibold mb-1">Prompt Arahan <span className="font-normal">(Opsional)</span></label>
+                                                        <textarea className="w-full p-2 border rounded text-sm min-h-[50px] outline-none focus:border-brand-500" value={customPromptKAK} onChange={e => setCustomPromptKAK(e.target.value)} placeholder="Misal: Buat lebih tegas..."></textarea>
+                                                    </div>
+                                                    <select className="w-full p-2.5 bg-white border rounded font-bold text-brand-700 outline-none focus:border-brand-500" value={selectedPart} onChange={e => setSelectedPart(e.target.value)}>
+                                                        <option value="part1">Generate: Bab I - III (Pendahuluan & Tujuan)</option>
+                                                        <option value="part2">Generate: Bab IV - VI (Kegiatan & Sasaran)</option>
+                                                        <option value="part3">Generate: Bab VII - IX (Jadwal & Evaluasi)</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="p-4 bg-white border-t shadow"><button type="button" onClick={handleGenerateKAKPart} disabled={loadingKAK} className="w-full font-bold py-3 rounded text-white bg-brand-600 hover:bg-brand-700 disabled:bg-slate-400 disabled:cursor-wait flex justify-center items-center gap-2 transition-colors shadow">{loadingKAK ? <><i className="fas fa-spinner fa-spin"></i> Menyusun...</> : <><i className="fas fa-pen-nib"></i> Generate Bagian Terpilih</>}</button></div>
+                                    </div>
+
+                                    {/* Right Panel: KAK Preview */}
+                                    <div className="xl:col-span-7 flex flex-col h-[80vh]">
+                                        <div className="flex justify-between items-center mb-4 bg-white p-3 rounded-xl border shadow-sm">
+                                            <div className="flex items-center gap-2"><span className="bg-slate-800 text-white text-xs font-bold px-2 py-1 rounded hidden sm:inline-block">Format Resmi</span><span className="text-sm font-medium">Pratinjau KAK</span></div>
+                                            <div className="flex gap-2">
+                                                <button type="button" className="px-3 py-1.5 text-sm bg-slate-100 hover:bg-slate-200 rounded transition-colors" onClick={() => setKakParts({part1:'', part2:'', part3:''})}><i className="fas fa-eraser"></i> Reset</button>
+                                                <button type="button" disabled={!docPreview} onClick={handlePrint} className={`px-4 py-1.5 text-sm text-white rounded transition-colors flex items-center gap-2 ${docPreview ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
+                                                    <i className="fas fa-file-pdf"></i> Unduh PDF
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="bg-white border shadow-lg flex-1 overflow-y-auto p-6 sm:p-10 rounded-xl relative">
+                                            {docPreview ? <div className="prose max-w-none text-slate-800" dangerouslySetInnerHTML={{ __html: marked.parse(docPreview) }} /> : <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-300"><i className="fas fa-file-alt text-6xl mb-4"></i><p>Pilih unit, isi form, dan klik Generate.</p></div>}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* WORKFLOW: AUDIT PLAN */}
+                            {activeTahap === 'tahap1' && activeSubMenu === 'auditplan' && (
+                                <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
+                                    <div className="bg-slate-50 px-6 py-4 border-b flex flex-col sm:flex-row sm:justify-between items-start sm:items-center gap-4">
+                                        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><i className="fas fa-list-ul"></i></div><div><h3 className="font-bold">Rincian Kegiatan Audit (Audit Plan)</h3><p className="text-xs">Lampiran 4 Pedoman AITM (Tersinkronisasi KAK)</p></div></div>
+                                        <button type="button" onClick={handlePrint} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
+                                            <i className="fas fa-file-pdf"></i> Unduh PDF
+                                        </button>
+                                    </div>
+                                    <div className="p-4 overflow-y-auto flex-1">
+                                        {formDataKAK.lingkupAudit.length > 0 ? (
+                                            <div className="overflow-x-auto border rounded-lg shadow-sm">
+                                                <table className="w-full text-left text-slate-600 border-collapse min-w-[1200px]">
+                                                    <thead className="text-[10px] uppercase bg-slate-100 border-b text-center align-middle">
+                                                        <tr>
+                                                            <th className="px-2 py-3 border-r w-10">No</th>
+                                                            <th className="px-3 py-3 border-r w-32">Unit / Sasaran Audit</th>
+                                                            <th className="px-3 py-3 border-r min-w-[150px]">Tujuan Audit</th>
+                                                            <th className="px-3 py-3 border-r w-32">Sasaran Audit</th>
+                                                            <th className="px-3 py-3 border-r w-32">Tim Auditor</th>
+                                                            <th className="px-3 py-3 border-r w-40">Standar / Kriteria Acuan</th>
+                                                            <th className="px-3 py-3 border-r w-32">Metoda</th>
+                                                            <th className="px-3 py-3 border-r w-24">Instrumen</th>
+                                                            <th className="px-3 py-3 border-r w-32">Tgl / Waktu (Sem 1)</th>
+                                                            <th className="px-3 py-3 border-r w-32">Tgl / Waktu (Sem 2)</th>
+                                                            <th className="px-3 py-3 w-20">Ket</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="text-xs">
+                                                        {formDataKAK.lingkupAudit.map((item, idx) => (
+                                                            <tr key={idx} className="border-b hover:bg-slate-50 align-top">
+                                                                <td className="px-2 py-3 border-r text-center font-bold text-slate-400 bg-slate-50/50">{idx + 1}</td>
+                                                                <td className="px-3 py-3 border-r"><span className="font-bold block mb-1">{item.program}</span></td>
+                                                                <td className="px-3 py-3 border-r">Mengevaluasi dan memperbaiki:<br/><span className="italic mt-1 block">"{item.masalahSpesifik}"</span></td>
+                                                                <td className="px-3 py-3 border-r"><span className="inline-block bg-slate-100 border px-1 rounded">{item.subKegiatan}</span></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" placeholder="Nama Tim..." value={item.auditor} onChange={e => updateLingkupField(idx, 'auditor', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" value={item.standar} onChange={e => updateLingkupField(idx, 'standar', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" value={item.metode} onChange={e => updateLingkupField(idx, 'metode', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" value={item.instrumen} onChange={e => updateLingkupField(idx, 'instrumen', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" placeholder="Cth: 5-7 Juli" value={item.jadwalSem1} onChange={e => updateLingkupField(idx, 'jadwalSem1', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2 border-r"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" placeholder="Cth: 5-7 Des" value={item.jadwalSem2} onChange={e => updateLingkupField(idx, 'jadwalSem2', e.target.value)}></textarea></td>
+                                                                <td className="px-2 py-2"><textarea className="w-full p-1.5 border rounded text-[10px] min-h-[60px] focus:border-brand-500 outline-none" value={item.ket} onChange={e => updateLingkupField(idx, 'ket', e.target.value)}></textarea></td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-slate-400 min-h-[300px]">
+                                                <i className="fas fa-list-alt text-6xl mb-4 text-slate-300"></i>
+                                                <p className="font-bold text-slate-500 text-lg">Belum ada target audit.</p>
+                                                <p className="text-sm mt-1">Silakan kembali ke menu "1. Kerangka Acuan (KAK)" dan klik "Tambah Target KAK".</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* WORKFLOW: JADWAL AUDIT (GANTT CHART) */}
+                            {activeTahap === 'tahap1' && activeSubMenu === 'jadwal' && (
+                                <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
+                                    <div className="bg-slate-50 px-6 py-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><i className="fas fa-calendar-alt"></i></div><div><h3 className="font-bold">Jadwal Audit Internal (Gantt Chart)</h3><p className="text-xs">Klik pada kolom bulan untuk menjadwalkan audit unit.</p></div></div>
+                                        <button type="button" onClick={handlePrint} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
+                                            <i className="fas fa-file-pdf"></i> Unduh PDF
+                                        </button>
+                                    </div>
+                                    <div className="p-4 overflow-y-auto flex-1">
+                                        {formDataKAK.lingkupAudit.length > 0 ? (
+                                            <div className="overflow-x-auto border rounded-lg shadow-sm">
+                                                <table className="w-full text-left text-slate-600 border-collapse min-w-[800px]">
+                                                    <thead className="text-[10px] uppercase bg-slate-100 border-b text-center align-middle">
+                                                        <tr>
+                                                            <th className="px-2 py-3 border-r w-8" rowSpan="2">No</th>
+                                                            <th className="px-3 py-3 border-r w-64" rowSpan="2">Unit / Sasaran Audit</th>
+                                                            <th className="px-2 py-2 border-b" colSpan="12">Bulan Pelaksanaan</th>
+                                                        </tr>
+                                                        <tr>
+                                                            {['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((m, i) => (
+                                                                <th key={i} className="px-1 py-2 border-r border-t w-10">{m}</th>
+                                                            ))}
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody className="text-xs">
+                                                        {formDataKAK.lingkupAudit.map((item, idx) => (
+                                                            <tr key={idx} className="border-b hover:bg-slate-50">
+                                                                <td className="px-2 py-2 border-r text-center font-bold text-slate-400 bg-slate-50/50">{idx + 1}</td>
+                                                                <td className="px-3 py-2 border-r"><span className="font-bold text-brand-700 block">{item.program}</span><span className="text-[10px] text-slate-500">{item.subKegiatan}</span></td>
+                                                                {[1,2,3,4,5,6,7,8,9,10,11,12].map(bulan => {
+                                                                    const isChecked = (item.bulanPelaksanaan || []).includes(bulan);
+                                                                    return (
+                                                                        <td key={bulan} onClick={() => toggleBulan(idx, bulan)} className={`px-1 py-2 border-r text-center cursor-pointer transition-colors ${isChecked ? 'bg-brand-500 text-white' : 'hover:bg-slate-200'}`}>
+                                                                            {isChecked && <i className="fas fa-check"></i>}
+                                                                        </td>
+                                                                    )
+                                                                })}
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-slate-400 min-h-[300px]">
+                                                <i className="fas fa-calendar-alt text-6xl mb-4 text-slate-300"></i>
+                                                <p className="font-bold text-slate-500 text-lg">Belum ada target audit.</p>
+                                                <p className="text-sm mt-1">Silakan kembali ke menu "1. Kerangka Acuan (KAK)" dan klik "Tambah Target KAK".</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* WORKFLOW: INSTRUMEN & CHECK LIST */}
+                            {activeTahap === 'tahap1' && activeSubMenu === 'instrumen' && (
+                                <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
+                                    <div className="bg-slate-50 px-4 sm:px-6 py-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                                        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><i className="fas fa-tasks"></i></div><div><h3 className="font-bold">Instrumen & Check List Audit</h3><p className="text-xs">Sintesa tabel instrumen otomatis menggunakan AI + Dokumen/Internet.</p></div></div>
+                                        <button type="button" onClick={handlePrint} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
+                                            <i className="fas fa-file-pdf"></i> Unduh Semua Instrumen
+                                        </button>
+                                    </div>
+                                    <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-8 bg-slate-100/50">
+                                        {formDataKAK.lingkupAudit.length > 0 ? (
+                                            formDataKAK.lingkupAudit.map((item, idx) => (
+                                                <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                                                    {/* Header Instrumen Item */}
+                                                    <div className="bg-slate-800 px-4 py-3 flex justify-between items-center">
+                                                        <div>
+                                                            <h4 className="font-bold text-white text-sm">{idx + 1}. {item.subKegiatan}</h4>
+                                                            <p className="text-[10px] text-slate-300 mt-0.5"><span className="font-medium text-brand-300">Judul:</span> {item.instrumen}</p>
+                                                        </div>
+                                                        <span className="text-[10px] bg-slate-700 text-slate-300 px-2 py-1 rounded hidden sm:block">{item.metode}</span>
+                                                    </div>
+                                                    
+                                                    {/* Kontrol Generasi AI */}
+                                                    <div className="p-4 bg-slate-50 border-b border-slate-200">
+                                                        <h5 className="text-xs font-bold text-slate-700 mb-3"><i className="fas fa-sliders-h text-brand-500 mr-2"></i>Pengaturan Sintesa Instrumen AI</h5>
+                                                        
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
+                                                            {/* Panel Kiri: Manual Text */}
+                                                            <div>
+                                                                <label className="block text-[10px] font-bold text-slate-600 mb-1">1. Referensi Manual (Ketik/Paste SOP)</label>
+                                                                <textarea 
+                                                                    className="w-full p-2 border border-slate-300 rounded text-[11px] bg-white min-h-[90px] shadow-inner focus:outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500 transition-colors" 
+                                                                    placeholder="Paste poin-poin SOP/Regulasi/Arahan khusus di sini agar AI mengubahnya menjadi tabel checklist..."
+                                                                    value={item.instrumenManual || ''}
+                                                                    onChange={e => updateLingkupField(idx, 'instrumenManual', e.target.value)}
+                                                                ></textarea>
+                                                            </div>
+                                                            
+                                                            {/* Panel Kanan: Upload & Browsing */}
+                                                            <div className="space-y-3">
+                                                                <div>
+                                                                    <label className="block text-[10px] font-bold text-slate-600 mb-1">2. Upload Dokumen Referensi (PDF/Gambar)</label>
+                                                                    <div className="relative">
+                                                                        <input 
+                                                                            type="file" 
+                                                                            accept=".pdf,image/*" 
+                                                                            onChange={e => handleFileChange(idx, e)}
+                                                                            className="w-full p-1.5 border border-slate-300 rounded text-xs bg-white file:mr-3 file:py-1 file:px-3 file:rounded file:border-0 file:text-[10px] file:font-bold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer"
+                                                                        />
+                                                                    </div>
+                                                                    {item.instrumenFileName && <p className="text-[10px] font-bold text-emerald-600 mt-1.5"><i className="fas fa-check-circle"></i> File siap: {item.instrumenFileName}</p>}
+                                                                </div>
+                                                                
+                                                                <div>
+                                                                    <label className="block text-[10px] font-bold text-slate-600 mb-1">3. Penelusuran Internet</label>
+                                                                    <label className={`flex items-center gap-2 cursor-pointer border p-2 rounded transition-colors ${item.useBrowsing ? 'bg-blue-50 border-blue-300' : 'bg-white border-slate-300 hover:bg-slate-50'}`}>
+                                                                        <input 
+                                                                            type="checkbox" 
+                                                                            className="rounded w-4 h-4 text-blue-600 focus:ring-blue-500"
+                                                                            checked={item.useBrowsing || false}
+                                                                            onChange={e => updateLingkupField(idx, 'useBrowsing', e.target.checked)}
+                                                                        />
+                                                                        <span className={`text-[11px] font-bold ${item.useBrowsing ? 'text-blue-800' : 'text-slate-600'}`}><i className="fas fa-globe text-blue-500 mr-1"></i> Live Browsing (Google Search)</span>
+                                                                    </label>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                        
+                                                        <button 
+                                                            type="button"
+                                                            onClick={() => handleGenerateInstrumenDetail(idx)}
+                                                            disabled={loadingInstrumenIdx === idx}
+                                                            className="w-full text-sm bg-brand-600 text-white font-bold px-4 py-2.5 rounded shadow hover:bg-brand-700 flex items-center justify-center gap-2 transition-colors"
+                                                        >
+                                                            {loadingInstrumenIdx === idx ? <i className="fas fa-spinner fa-spin text-lg"></i> : <i className="fas fa-magic text-lg"></i>} Generate Tabel Instrumen
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Hasil Preview Tabel Instrumen */}
+                                                    <div className="p-4 sm:p-6 overflow-x-auto">
+                                                        {item.hasilInstrumen ? (
+                                                            <div className="prose max-w-none text-xs sm:text-sm text-slate-800 min-w-[600px]" dangerouslySetInnerHTML={{ __html: marked.parse(item.hasilInstrumen) }} />
+                                                        ) : (
+                                                            <div className="text-center py-8 text-slate-400 text-sm">
+                                                                <div className="w-16 h-16 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-3"><i className="fas fa-clipboard-list text-2xl text-slate-300"></i></div>
+                                                                <p className="font-medium text-slate-500">Tabel Instrumen Belum Dibuat</p>
+                                                                <p className="text-xs mt-1">Gunakan panel di atas untuk menyintesa tabel secara otomatis.</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="flex flex-col items-center justify-center h-full text-slate-400 min-h-[300px]">
+                                                <i className="fas fa-tasks text-6xl mb-4 text-slate-300"></i>
+                                                <p className="font-bold text-slate-500 text-lg">Belum ada target audit.</p>
+                                                <p className="text-sm mt-1">Silakan kembali ke menu "1. Kerangka Acuan (KAK)" dan klik "Tambah Target KAK".</p>
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* WORKFLOW LAINNYA */}
+                            {activeTahap === 'tahap1' && !['kak_komprehensif', 'auditplan', 'jadwal', 'instrumen'].includes(activeSubMenu) && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-tools text-5xl mb-4"></i><p>Modul dikembangkan segera.</p></div>)}
+                            {activeTahap !== 'tahap1' && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-hammer text-5xl mb-4"></i><p>Kembali ke Perencanaan.</p></div>)}
+                        </main>
+                    </div>
+
+                    {/* BLOK KHUSUS RENDER PDF (Tidak terlihat di UI biasa) */}
+                    <div id="print-container" className={isPrinting ? "bg-white p-8 absolute top-0 left-0 w-full z-[9999] min-h-screen text-black" : "hidden print-only"}>
+                        {activeSubMenu === 'kak_komprehensif' ? (
+                            <div className="print-area prose max-w-none">
+                                <h1 style={{textAlign: 'center', fontWeight: 'bold', fontSize: '16pt', marginBottom: '10px'}}>KERANGKA ACUAN KEGIATAN (KAK) AUDIT INTERNAL <br/> {formDataKAK.namaFaskes.toUpperCase()} TAHUN {formDataKAK.tahun}</h1>
+                                <div dangerouslySetInnerHTML={{ __html: docPreview ? marked.parse(docPreview) : '<p>Dokumen kosong.</p>' }} />
+                                <div style={{marginTop: '50px', textAlign: 'right'}}><p>Mengetahui,</p><p style={{marginBottom: '60px'}}>Kepala {formDataKAK.namaFaskes}</p><p style={{fontWeight: 'bold', textDecoration: 'underline'}}>(.....................................)</p></div>
+                            </div>
+                        ) : activeSubMenu === 'auditplan' ? (
+                            <div className="print-area" style={{ width: '100%', fontFamily: 'Arial, sans-serif' }}>
+                                <h1 style={{textAlign: 'center', fontWeight: 'bold', fontSize: '12pt', marginBottom: '20px'}}>RINCIAN KEGIATAN AUDIT (AUDIT PLAN) <br/> {formDataKAK.namaFaskes.toUpperCase()} TAHUN {formDataKAK.tahun}</h1>
+                                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '8pt', border: '1px solid black'}}>
+                                    <thead>
+                                        <tr style={{backgroundColor: '#e5e7eb', textAlign: 'center'}}>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '3%'}}>No</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '10%'}}>Unit / Tujuan</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '15%'}}>Sasaran Audit</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '12%'}}>Tim Auditor</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '15%'}}>Standar / Kriteria yang menjadi acuan</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '10%'}}>Metode</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '10%'}}>Instrumen audit</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '10%'}}>Tanggal Waktu (Sem I)</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '10%'}}>Tanggal Waktu (Sem II)</th>
+                                            <th style={{border: '1px solid black', padding: '5px', width: '5%'}}>Ket</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody style={{verticalAlign: 'top'}}>
+                                        {formDataKAK.lingkupAudit.map((item, idx) => (
+                                            <tr key={idx}>
+                                                <td style={{border: '1px solid black', padding: '5px', textAlign: 'center'}}>{idx + 1}</td>
+                                                <td style={{border: '1px solid black', padding: '5px'}}><b>{item.program}</b><br/><br/>Mengevaluasi: <i>"{item.masalahSpesifik}"</i></td>
+                                                <td style={{border: '1px solid black', padding: '5px'}}>{item.subKegiatan}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.auditor}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.standar}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.metode}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.instrumen}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.jadwalSem1}</td>
+                                                <td style={{border: '1px solid black', padding: '5px', whiteSpace: 'pre-line'}}>{item.jadwalSem2}</td>
+                                                <td style={{border: '1px solid black', padding: '5px'}}>{item.ket}</td>
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <div style={{marginTop: '30px', textAlign: 'right'}}><p>Ketua Tim Auditor,</p><p style={{marginTop: '50px'}}>(.....................................)</p></div>
+                            </div>
+                        ) : activeSubMenu === 'jadwal' ? (
+                            <div className="print-area" style={{ width: '100%', fontFamily: 'Arial, sans-serif' }}>
+                                <h1 style={{textAlign: 'center', fontWeight: 'bold', fontSize: '12pt', marginBottom: '20px'}}>JADWAL AUDIT INTERNAL (GANTT CHART) <br/> {formDataKAK.namaFaskes.toUpperCase()} TAHUN {formDataKAK.tahun}</h1>
+                                <table style={{width: '100%', borderCollapse: 'collapse', fontSize: '9pt', border: '1px solid black'}}>
+                                    <thead>
+                                        <tr style={{backgroundColor: '#e5e7eb', textAlign: 'center'}}>
+                                            <th style={{border: '1px solid black', padding: '6px', width: '5%'}} rowSpan="2">No</th>
+                                            <th style={{border: '1px solid black', padding: '6px', width: '35%'}} rowSpan="2">Unit / Sasaran Audit</th>
+                                            <th style={{border: '1px solid black', padding: '6px'}} colSpan="12">Bulan Pelaksanaan</th>
+                                        </tr>
+                                        <tr style={{backgroundColor: '#e5e7eb', textAlign: 'center'}}>
+                                            {['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'].map((m, i) => (
+                                                <th key={i} style={{border: '1px solid black', padding: '6px', width: '5%'}}>{m}</th>
+                                            ))}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {formDataKAK.lingkupAudit.map((item, idx) => (
+                                            <tr key={idx}>
+                                                <td style={{border: '1px solid black', padding: '6px', textAlign: 'center'}}>{idx + 1}</td>
+                                                <td style={{border: '1px solid black', padding: '6px'}}><b>{item.program}</b><br/>{item.subKegiatan}</td>
+                                                {[1,2,3,4,5,6,7,8,9,10,11,12].map(bulan => (
+                                                    <td key={bulan} style={{border: '1px solid black', padding: '6px', textAlign: 'center', backgroundColor: (item.bulanPelaksanaan || []).includes(bulan) ? '#4b5563' : 'transparent'}}>
+                                                        {(item.bulanPelaksanaan || []).includes(bulan) ? <span style={{color: 'white'}}>X</span> : ''}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                                <div style={{marginTop: '30px', textAlign: 'right'}}><p>Ketua Tim Auditor,</p><p style={{marginTop: '50px'}}>(.....................................)</p></div>
+                            </div>
+                        ) : activeSubMenu === 'instrumen' ? (
+                            <div className="print-area" style={{ width: '100%', fontFamily: 'Arial, sans-serif' }}>
+                                <h1 style={{textAlign: 'center', fontWeight: 'bold', fontSize: '14pt', marginBottom: '30px', textTransform: 'uppercase'}}>
+                                    INSTRUMEN AUDIT INTERNAL <br/>
+                                    {formDataKAK.namaFaskes.toUpperCase()} TAHUN {formDataKAK.tahun}
+                                </h1>
+                                {formDataKAK.lingkupAudit.map((item, idx) => (
+                                    <div key={idx} style={{marginBottom: '40px', pageBreakInside: 'avoid'}}>
+                                        <h3 style={{fontSize: '12pt', fontWeight: 'bold', borderBottom: '1px solid black', paddingBottom: '5px', marginBottom: '10px'}}>{idx + 1}. {item.subKegiatan} ({item.program})</h3>
+                                        <table style={{width: '100%', marginBottom: '10px', fontSize: '10pt'}}>
+                                            <tbody>
+                                                <tr><td style={{width: '150px', verticalAlign: 'top'}}><b>Fokus Masalah</b></td><td style={{verticalAlign: 'top'}}>: {item.masalahSpesifik}</td></tr>
+                                                <tr><td style={{width: '150px', verticalAlign: 'top'}}><b>Standar Acuan</b></td><td style={{verticalAlign: 'top'}}>: {item.standar.replace(/\n/g, ', ')}</td></tr>
+                                                <tr><td style={{width: '150px', verticalAlign: 'top'}}><b>Metode & Instrumen</b></td><td style={{verticalAlign: 'top'}}>: {item.metode} ({item.instrumen})</td></tr>
+                                            </tbody>
+                                        </table>
+                                        <div className="prose max-w-none mt-4" dangerouslySetInnerHTML={{ __html: item.hasilInstrumen ? marked.parse(item.hasilInstrumen) : '<p><i>Instrumen belum dibuat.</i></p>' }} />
+                                    </div>
+                                ))}
+                            </div>
+                        ) : null}
+                    </div>
+
+                </div>
+            );
+        };
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
