@@ -4,20 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Sistem Informasi & Asisten Audit Internal FKTP</title>
-    <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- FontAwesome -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <!-- Google Fonts -->
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Marked.js for Markdown Parsing -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-    <!-- html2pdf for direct PDF export -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     
     <script>
@@ -66,8 +59,23 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
         
-        // --- KONFIGURASI API KEY CANVAS ---
-        const apiKey = ""; // Otomatis terisi di lingkungan Canvas
+        // --- KONFIGURASI API KEY (Dynamic dari Dashboard) ---
+        let apiKey = ""; 
+        let apiModel = "gemini-2.5-flash";
+        let isWaitingForRetry = null;
+        let lastFailedAction = null;
+        
+        const urlParams = new URLSearchParams(window.location.search);
+        const keyFromUrl = urlParams.get('key');
+        const modelFromUrl = urlParams.get('model');
+        
+        if (keyFromUrl) apiKey = keyFromUrl;
+        if (modelFromUrl) apiModel = modelFromUrl;
+        
+        if (keyFromUrl || modelFromUrl) {
+            const cleanUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+            window.history.replaceState({path: cleanUrl}, '', cleanUrl);
+        }
         
         // --- DATABASE HIRARKI ILP ---
         const ilpHierarchy = {
@@ -148,9 +156,13 @@
             }
         };
 
-        // --- SISTEM PUSAT AI DENGAN EXPONENTIAL BACKOFF & ERROR HANDLING ---
+        // --- SISTEM PUSAT AI DENGAN EXPONENTIAL BACKOFF & ERROR HANDLING (Terhubung Dashboard) ---
         const callGeminiAPI = async (textPrompt, additionalParts = [], useSearch = false) => {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+            if (!apiKey) {
+                throw new Error("API Key belum terhubung dari Dashboard.");
+            }
+
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${apiModel}:generateContent?key=${apiKey}`;
             
             const parts = [{ text: textPrompt }, ...additionalParts];
             const body = { contents: [{ parts }] };
@@ -175,7 +187,17 @@
                     }
 
                     if (!response.ok) {
+                        if (response.status === 429 || response.status === 404 || response.status === 403 || response.status >= 500) {
+                            if (window.parent !== window) {
+                                window.parent.postMessage({ type: 'API_ERROR', code: response.status }, '*');
+                            }
+                            throw new Error("API_FAIL_ROTATE");
+                        }
                         throw new Error(data.error?.message || `HTTP Error: ${response.status}`);
+                    }
+
+                    if (window.parent !== window) {
+                        window.parent.postMessage({ type: 'API_SUCCESS' }, '*');
                     }
 
                     if (data.candidates && data.candidates[0]) {
@@ -185,7 +207,8 @@
                     throw new Error("Format respons tidak dikenali dari AI. Silakan coba lagi.");
                 } catch (error) {
                     lastError = error;
-                    // Berhenti mencoba jika error berkaitan dengan autentikasi
+                    if (error.message === "API_FAIL_ROTATE") throw error;
+                    
                     if (error.message.includes('API key not valid') || error.message.includes('API key is invalid') || error.message.includes('400')) {
                         throw new Error("API Key internal tidak valid atau kuota habis.");
                     }
@@ -250,6 +273,47 @@
 
             const showAlert = (msg) => setToastMsg(msg);
 
+            useEffect(() => {
+                const handleMessage = (event) => {
+                    if (event.data && event.data.type === 'UPDATE_CONFIG') {
+                        apiKey = event.data.key;
+                        if (event.data.model) apiModel = event.data.model;
+                        console.log(`[Audit App] Konfigurasi Diperbarui. Model: ${apiModel}`);
+                        
+                        if (isWaitingForRetry) {
+                            showAlert(`🔄 Melanjutkan proses dengan model ${apiModel}...`);
+                            const retryFunc = isWaitingForRetry;
+                            isWaitingForRetry = null;
+                            setTimeout(() => retryFunc(), 1000);
+                        }
+                    }
+                    
+                    if (event.data && event.data.type === 'STOP_RETRY') {
+                        isWaitingForRetry = null;
+                        setLoadingUnit(false);
+                        setLoadingKriteria(false);
+                        setLoadingInstrumen(false);
+                        setLoadingInstrumenIdx(null);
+                        setLoadingTerpadu(false);
+                        setLoadingKAK(false);
+                        
+                        showAlert("❌ Siklus Terhenti: Seluruh API Key dan Model gagal memproses.");
+                        setTimeout(() => {
+                            const cobaLagi = window.confirm("Sistem telah mencoba semua Slot API Key dan Model AI secara otomatis, namun semuanya kehabisan kuota atau gagal.\n\nApakah Anda ingin mencoba memproses ulang dari awal?");
+                            if (cobaLagi && lastFailedAction) {
+                                lastFailedAction();
+                            }
+                        }, 500);
+                    }
+                };
+                
+                window.addEventListener('message', handleMessage);
+                if (!apiKey && window.parent !== window) {
+                    window.parent.postMessage({ type: 'REQUEST_CONFIG' }, '*');
+                }
+                return () => window.removeEventListener('message', handleMessage);
+            }, []);
+
             const handleKlasterChange = (e) => { setSelKlaster(e.target.value); setSelProgram(''); setSelKegiatan(''); resetFormInputs(); };
             const handleProgramChange = (e) => { setSelProgram(e.target.value); setSelKegiatan(''); resetFormInputs(); };
             const handleKegiatanChange = (e) => { setSelKegiatan(e.target.value); resetFormInputs(); };
@@ -264,9 +328,17 @@
                 try {
                     const text = await callGeminiAPI(prompt);
                     setSelMasalahSpesifik(text.trim());
+                    setLoadingUnit(false);
                 } catch (error) {
-                    showAlert(`Gagal menganalisa masalah:\n${error.message}`);
-                } finally { setLoadingUnit(false); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleAutoFillUnit();
+                        lastFailedAction = () => handleAutoFillUnit();
+                    } else {
+                        showAlert(`Gagal menganalisa masalah:\n${error.message}`);
+                        setLoadingUnit(false);
+                    }
+                }
             };
 
             // AI 2: Kriteria Audit (Checklist)
@@ -279,9 +351,17 @@
                     const text = await callGeminiAPI(prompt);
                     const list = text.split('\n').filter(line => line.trim().startsWith('-')).map(line => line.replace(/^-\s*/, '').trim());
                     setAiKriteriaList(list.length > 0 ? list : text.split('\n').filter(line => line.trim().length > 0));
+                    setLoadingKriteria(false);
                 } catch (error) {
-                    showAlert(`Gagal memuat kriteria:\n${error.message}`);
-                } finally { setLoadingKriteria(false); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleGenerateKriteria();
+                        lastFailedAction = () => handleGenerateKriteria();
+                    } else {
+                        showAlert(`Gagal memuat kriteria:\n${error.message}`);
+                        setLoadingKriteria(false);
+                    }
+                }
             };
 
             const toggleKriteria = (item) => setSelectedKriteria(prev => prev.includes(item) ? prev.filter(k => k !== item) : [...prev, item]);
@@ -296,9 +376,17 @@
                 try {
                     const text = await callGeminiAPI(prompt);
                     setSelInstrumen(text.trim());
+                    setLoadingInstrumen(false);
                 } catch (error) {
-                    showAlert(`Gagal menghasilkan judul:\n${error.message}`);
-                } finally { setLoadingInstrumen(false); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleGenerateInstrumen();
+                        lastFailedAction = () => handleGenerateInstrumen();
+                    } else {
+                        showAlert(`Gagal menghasilkan judul:\n${error.message}`);
+                        setLoadingInstrumen(false);
+                    }
+                }
             };
 
             // Tambah Target
@@ -373,9 +461,17 @@
                 try {
                     const text = await callGeminiAPI(promptText, additionalParts, item.useBrowsing);
                     updateLingkupField(idx, 'hasilInstrumen', text.trim());
+                    setLoadingInstrumenIdx(null);
                 } catch (error) {
-                    showAlert(`Gagal membuat tabel instrumen:\n${error.message}`);
-                } finally { setLoadingInstrumenIdx(null); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleGenerateInstrumenDetail(idx);
+                        lastFailedAction = () => handleGenerateInstrumenDetail(idx);
+                    } else {
+                        showAlert(`Gagal membuat tabel instrumen:\n${error.message}`);
+                        setLoadingInstrumenIdx(null);
+                    }
+                }
             };
 
             // AI 5: Latar Belakang KAK
@@ -388,9 +484,17 @@
                 try {
                     const text = await callGeminiAPI(prompt);
                     setFormDataKAK(prev => ({ ...prev, latarBelakangTerpadu: text.trim() }));
+                    setLoadingTerpadu(false);
                 } catch (error) {
-                    showAlert(`Gagal merangkum latar belakang:\n${error.message}`);
-                } finally { setLoadingTerpadu(false); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleAutoFillTerpadu();
+                        lastFailedAction = () => handleAutoFillTerpadu();
+                    } else {
+                        showAlert(`Gagal merangkum latar belakang:\n${error.message}`);
+                        setLoadingTerpadu(false);
+                    }
+                }
             };
 
             // AI 6: KAK Per Bab
@@ -412,12 +516,19 @@
                 try {
                     const text = await callGeminiAPI(prompt);
                     setKakParts(prev => ({ ...prev, [selectedPart]: text.trim() }));
+                    setLoadingKAK(false);
                 } catch (error) {
-                    showAlert(`Gagal menyusun Bab KAK:\n${error.message}`);
-                } finally { setLoadingKAK(false); }
+                    if (error.message === "API_FAIL_ROTATE") {
+                        showAlert("⏳ Kuota/Model limit. Menunggu rotasi otomatis...");
+                        isWaitingForRetry = () => handleGenerateKAKPart();
+                        lastFailedAction = () => handleGenerateKAKPart();
+                    } else {
+                        showAlert(`Gagal menyusun Bab KAK:\n${error.message}`);
+                        setLoadingKAK(false);
+                    }
+                }
             };
 
-            // Mengganti window.print dengan html2pdf
             const handlePrint = () => {
                 const element = document.getElementById('print-container');
                 if (!element) return showAlert("Dokumen belum siap.");
@@ -447,7 +558,6 @@
 
             return (
                 <div className="min-h-screen flex flex-col relative bg-slate-50">
-                    {/* Kotak Pesan Toast Kustom (Sebagai pengganti alert) */}
                     {toastMsg && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 backdrop-blur-sm transition-opacity">
                             <div className="bg-white rounded-xl shadow-2xl max-w-md w-full overflow-hidden transform transition-transform scale-100">
@@ -466,10 +576,8 @@
                         </div>
                     )}
 
-                    {/* Header - No Print */}
                     <header className="bg-slate-900 text-white shadow-md no-print sticky top-0 z-30">
                         <div className="max-w-7xl mx-auto px-4 h-16 flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-0">
-                            {/* Logo */}
                             <div className="flex items-center gap-3 w-full sm:w-auto justify-center sm:justify-start h-full">
                                 <div className="w-8 h-8 rounded bg-brand-500 flex items-center justify-center"><i className="fas fa-sitemap text-white"></i></div>
                                 <div><h1 className="font-bold text-lg leading-tight">AITM Workspace</h1><p className="text-[10px] text-brand-200">Audit Internal Puskesmas - ILP</p></div>
@@ -478,7 +586,6 @@
                                 </div>
                             </div>
                             
-                            {/* Top Tahap Navigation */}
                             <nav className="flex space-x-1 sm:h-full items-center">
                                 {[{ id: 'tahap1', label: 'Perencanaan', icon: 'fa-calendar' }, { id: 'tahap2', label: 'Pelaksanaan', icon: 'fa-search' }, { id: 'tahap3', label: 'Analisis RTL', icon: 'fa-chart-pie' }].map(t => (
                                     <button key={t.id} type="button" onClick={() => setActiveTahap(t.id)} className={`px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center gap-2 ${activeTahap === t.id ? 'bg-brand-600 text-white' : 'text-slate-300 hover:bg-slate-800 hover:text-white'}`}>
@@ -489,7 +596,6 @@
                         </div>
                     </header>
 
-                    {/* Top Horizontal Sub-Menu Bar */}
                     {activeTahap === 'tahap1' && (
                         <div className="bg-white border-b border-slate-200 shadow-sm no-print sticky top-16 z-20">
                             <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto hide-scrollbar">
@@ -502,16 +608,12 @@
                         </div>
                     )}
 
-                    {/* Main Workspace Area */}
                     <div className="flex-1 flex overflow-hidden">
                         
-                        {/* Content Workspace */}
                         <main className="flex-1 overflow-y-auto relative p-4 sm:p-6 no-print">
                             
-                            {/* WORKFLOW: KAK */}
                             {activeTahap === 'tahap1' && activeSubMenu === 'kak_komprehensif' && (
                                 <div className="max-w-7xl mx-auto grid grid-cols-1 xl:grid-cols-12 gap-6 no-print">
-                                    {/* Left Panel */}
                                     <div className="xl:col-span-5 bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden flex flex-col max-h-[80vh]">
                                         <div className="bg-slate-50 px-4 py-3 border-b border-slate-200"><h3 className="font-bold text-slate-800"><i className="fas fa-edit text-brand-500 mr-2"></i>Penyusunan KAK</h3></div>
                                         <div className="p-4 space-y-5 overflow-y-auto flex-1 hide-scrollbar">
@@ -521,7 +623,6 @@
                                                 <div><label className="block text-xs font-semibold text-slate-600 mb-1">Tahun KAK</label><input type="text" className="w-full p-2 bg-slate-50 border rounded text-sm focus:border-brand-500 focus:ring-1 focus:ring-brand-500 outline-none transition-colors" value={formDataKAK.tahun} onChange={e => setFormDataKAK({...formDataKAK, tahun: e.target.value})} /></div>
                                             </div>
 
-                                            {/* Modul Seleksi */}
                                             <div className="p-4 border border-brand-200 bg-brand-50/30 rounded-xl shadow-sm relative overflow-hidden">
                                                 <div className="absolute top-0 right-0 bg-brand-100 text-brand-700 text-[10px] font-bold px-3 py-1 rounded-bl-lg">Wajib Diisi</div>
                                                 <label className="block text-sm font-bold text-slate-700 mb-3 border-b border-brand-100 pb-2"><i className="fas fa-layer-group text-brand-500 mr-2"></i>1. Pemilihan Unit (Inventaris)</label>
@@ -547,7 +648,6 @@
                                                     <textarea className="w-full p-2 bg-white border rounded text-xs min-h-[50px] shadow-inner outline-none focus:border-brand-500" value={selMasalahSpesifik} onChange={e => setSelMasalahSpesifik(e.target.value)} placeholder="Ketik masalah atau klik AI..."></textarea>
                                                 </div>
 
-                                                {/* MODUL KRITERIA */}
                                                 <div className="mt-4 pt-3 border-t border-brand-100">
                                                     <label className="block text-xs font-bold text-slate-700 mb-2">Standar / Kriteria Acuan</label>
                                                     <div className="flex gap-2 mb-2">
@@ -572,7 +672,6 @@
                                                     <textarea className="w-full p-2 bg-white border rounded text-[10px] min-h-[40px] shadow-inner outline-none focus:border-brand-500" value={selStandarManual} onChange={e => setSelStandarManual(e.target.value)} placeholder="Ketik manual kriteria tambahan di sini (opsional)..."></textarea>
                                                 </div>
 
-                                                {/* MODUL METODE & INSTRUMEN */}
                                                 <div className="mt-4 pt-3 border-t border-brand-100">
                                                     <label className="block text-xs font-bold text-slate-700 mb-2">Pilih Metode Audit</label>
                                                     <div className="flex flex-wrap gap-2 mb-3">
@@ -597,7 +696,6 @@
                                                 </button>
                                             </div>
 
-                                            {/* Daftar Target */}
                                             {formDataKAK.lingkupAudit.length > 0 && (
                                                 <div className="space-y-3 pt-2">
                                                     <label className="block text-sm font-bold text-slate-700 border-b border-slate-200 pb-2"><i className="fas fa-list-check text-brand-500 mr-2"></i>2. Daftar Target KAK ({formDataKAK.lingkupAudit.length})</label>
@@ -615,7 +713,6 @@
                                                 </div>
                                             )}
 
-                                            {/* Latar Belakang Terpadu */}
                                             <div className="pt-4 mt-2 border-t border-slate-200">
                                                 <div className="flex justify-between items-center mb-2">
                                                     <label className="block text-sm font-bold text-slate-700"><i className="fas fa-compress-arrows-alt text-brand-500 mr-2"></i>3. Latar Belakang Utama</label>
@@ -626,7 +723,6 @@
                                                 <textarea className="w-full p-3 bg-white border rounded text-sm min-h-[140px] shadow-inner outline-none focus:border-brand-500" value={formDataKAK.latarBelakangTerpadu} onChange={e => setFormDataKAK({...formDataKAK, latarBelakangTerpadu: e.target.value})} placeholder="Klik 'Auto-Fill AI' merumuskan narasi latar belakang..."></textarea>
                                             </div>
                                             
-                                            {/* Generate Per Bab */}
                                             <div className="pt-4 mt-2 border-t border-slate-200">
                                                 <label className="block text-sm font-bold text-slate-700 mb-2"><i className="fas fa-layer-group text-brand-500 mr-2"></i>4. Penyusunan KAK (Per Bab)</label>
                                                 <div className="space-y-3">
@@ -645,7 +741,6 @@
                                         <div className="p-4 bg-white border-t shadow"><button type="button" onClick={handleGenerateKAKPart} disabled={loadingKAK} className="w-full font-bold py-3 rounded text-white bg-brand-600 hover:bg-brand-700 disabled:bg-slate-400 disabled:cursor-wait flex justify-center items-center gap-2 transition-colors shadow">{loadingKAK ? <><i className="fas fa-spinner fa-spin"></i> Menyusun...</> : <><i className="fas fa-pen-nib"></i> Generate Bagian Terpilih</>}</button></div>
                                     </div>
 
-                                    {/* Right Panel: KAK Preview */}
                                     <div className="xl:col-span-7 flex flex-col h-[80vh]">
                                         <div className="flex justify-between items-center mb-4 bg-white p-3 rounded-xl border shadow-sm">
                                             <div className="flex items-center gap-2"><span className="bg-slate-800 text-white text-xs font-bold px-2 py-1 rounded hidden sm:inline-block">Format Resmi</span><span className="text-sm font-medium">Pratinjau KAK</span></div>
@@ -663,7 +758,6 @@
                                 </div>
                             )}
 
-                            {/* WORKFLOW: AUDIT PLAN */}
                             {activeTahap === 'tahap1' && activeSubMenu === 'auditplan' && (
                                 <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
                                     <div className="bg-slate-50 px-6 py-4 border-b flex flex-col sm:flex-row sm:justify-between items-start sm:items-center gap-4">
@@ -721,7 +815,6 @@
                                 </div>
                             )}
 
-                            {/* WORKFLOW: JADWAL AUDIT (GANTT CHART) */}
                             {activeTahap === 'tahap1' && activeSubMenu === 'jadwal' && (
                                 <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
                                     <div className="bg-slate-50 px-6 py-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -775,7 +868,6 @@
                                 </div>
                             )}
 
-                            {/* WORKFLOW: INSTRUMEN & CHECK LIST */}
                             {activeTahap === 'tahap1' && activeSubMenu === 'instrumen' && (
                                 <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
                                     <div className="bg-slate-50 px-4 sm:px-6 py-4 border-b flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -788,7 +880,6 @@
                                         {formDataKAK.lingkupAudit.length > 0 ? (
                                             formDataKAK.lingkupAudit.map((item, idx) => (
                                                 <div key={idx} className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-                                                    {/* Header Instrumen Item */}
                                                     <div className="bg-slate-800 px-4 py-3 flex justify-between items-center">
                                                         <div>
                                                             <h4 className="font-bold text-white text-sm">{idx + 1}. {item.subKegiatan}</h4>
@@ -797,12 +888,10 @@
                                                         <span className="text-[10px] bg-slate-700 text-slate-300 px-2 py-1 rounded hidden sm:block">{item.metode}</span>
                                                     </div>
                                                     
-                                                    {/* Kontrol Generasi AI */}
                                                     <div className="p-4 bg-slate-50 border-b border-slate-200">
                                                         <h5 className="text-xs font-bold text-slate-700 mb-3"><i className="fas fa-sliders-h text-brand-500 mr-2"></i>Pengaturan Sintesa Instrumen AI</h5>
                                                         
                                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-5 mb-4">
-                                                            {/* Panel Kiri: Manual Text */}
                                                             <div>
                                                                 <label className="block text-[10px] font-bold text-slate-600 mb-1">1. Referensi Manual (Ketik/Paste SOP)</label>
                                                                 <textarea 
@@ -813,7 +902,6 @@
                                                                 ></textarea>
                                                             </div>
                                                             
-                                                            {/* Panel Kanan: Upload & Browsing */}
                                                             <div className="space-y-3">
                                                                 <div>
                                                                     <label className="block text-[10px] font-bold text-slate-600 mb-1">2. Upload Dokumen Referensi (PDF/Gambar)</label>
@@ -853,7 +941,6 @@
                                                         </button>
                                                     </div>
 
-                                                    {/* Hasil Preview Tabel Instrumen */}
                                                     <div className="p-4 sm:p-6 overflow-x-auto">
                                                         {item.hasilInstrumen ? (
                                                             <div className="prose max-w-none text-xs sm:text-sm text-slate-800 min-w-[600px]" dangerouslySetInnerHTML={{ __html: marked.parse(item.hasilInstrumen) }} />
@@ -878,13 +965,11 @@
                                 </div>
                             )}
 
-                            {/* WORKFLOW LAINNYA */}
                             {activeTahap === 'tahap1' && !['kak_komprehensif', 'auditplan', 'jadwal', 'instrumen'].includes(activeSubMenu) && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-tools text-5xl mb-4"></i><p>Modul dikembangkan segera.</p></div>)}
                             {activeTahap !== 'tahap1' && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-hammer text-5xl mb-4"></i><p>Kembali ke Perencanaan.</p></div>)}
                         </main>
                     </div>
 
-                    {/* BLOK KHUSUS RENDER PDF (Tidak terlihat di UI biasa) */}
                     <div id="print-container" className={isPrinting ? "bg-white p-8 absolute top-0 left-0 w-full z-[9999] min-h-screen text-black" : "hidden print-only"}>
                         {activeSubMenu === 'kak_komprehensif' ? (
                             <div className="print-area prose max-w-none">
