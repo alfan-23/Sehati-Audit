@@ -486,8 +486,8 @@
             if (!dataText) return alert("Silakan isi dulu instrumen audit di Tab 1 dengan memilih 'Tidak / Belum' atau mengisi catatan lapangan.");
             setIsGeneratingUraian(true);
             try {
-              const prompt = `${dataText}\n\nBerdasarkan hasil pengisian instrumen di atas, buatlah narasi "Uraian Ketidaksesuaian" yang ringkas.\n\nINSTRUKSI WAJIB: \n1. Tarik kesimpulan HANYA dari poin-poin yang bermasalah.\n2. Kamu WAJIB menyertakan inti dari 'Catatan/Fakta Temuan Auditor' atau 'Hasil Wawancara'.\n3. Jangan mengarang informasi di luar data teks di atas.`;
-              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal puskesmas yang kritis, lugas, dan teliti.");
+              const prompt = `${dataText}\n\nBerdasarkan hasil pengisian instrumen di atas, buatlah narasi "Uraian Ketidaksesuaian".\n\nINSTRUKSI WAJIB: \n1. Tulis SANGAT RINGKAS dan to the point (maksimal 2-3 kalimat padat).\n2. Tarik kesimpulan HANYA dari poin-poin yang bermasalah.\n3. Jangan membuang esensi utama dari 'Catatan/Fakta Temuan Auditor' atau 'Hasil Wawancara'.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal yang kritis. Tuliskan narasi yang sangat ringkas, padat, dan jelas.");
               setTemuanData(prev => ({ ...prev, uraian: result.trim() }));
               triggerResizeAllTextareas();
             } catch (error) {
@@ -503,8 +503,8 @@
             if (!dataText) return alert("Silakan isi catatan keterangan/bukti pada instrumen di Tab 1 terlebih dahulu.");
             setIsGeneratingBukti(true);
             try {
-              const prompt = `${dataText}\n\nSebutkan "Bukti - Bukti Obyektif" yang mendukung ketidaksesuaian tersebut.\n\nINSTRUKSI WAJIB:\n1. Sajikan menggunakan format poin-poin (bullet points).\n2. Kamu WAJIB menuliskan secara persis fakta yang tertera pada 'Catatan/Fakta Temuan Auditor' atau 'Hasil Wawancara'.`;
-              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal puskesmas. Tuliskan ringkasan bukti objektif secara faktual.");
+              const prompt = `${dataText}\n\nSebutkan "Bukti - Bukti Obyektif" yang mendukung ketidaksesuaian tersebut.\n\nINSTRUKSI WAJIB:\n1. Sajikan menggunakan format poin-poin (bullet points) yang SANGAT SINGKAT (maksimal 1 kalimat per poin).\n2. Tuliskan persis faktanya secara padat tanpa kalimat pengantar yang bertele-tele.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal. Tuliskan ringkasan bukti objektif secara ringkas, faktual dan to the point.");
               setTemuanData(prev => ({ ...prev, bukti: result.trim() }));
               triggerResizeAllTextareas();
             } catch (error) {
@@ -520,8 +520,8 @@
             if (!dataText && !temuanData.uraian) return alert("Tidak ada data temuan. Silakan isi form Uraian Ketidaksesuaian terlebih dahulu.");
             setIsGeneratingAkar(true);
             try {
-              const prompt = `Data Temuan Lapangan:\n${dataText || temuanData.uraian}\n\nLakukan Analisis Akar Permasalahan (Root Cause Analysis).\n\nINSTRUKSI WAJIB:\n1. Baris pertama WAJIB menuliskan eksplisit metode yang kamu gunakan (misal: "Metode Analisis: 5 Whys" atau "Metode Analisis: Fishbone Diagram").\n2. Tuliskan tahapan analisisnya secara runut.\n3. Di bagian akhir, tarik kesimpulan "Akar Masalah Utama" dalam 1 kalimat padat.`;
-              const result = await generateNarrativeWithAI(prompt, "Kamu adalah analis sistem manajemen mutu. Lakukan RCA secara terstruktur, logis, dan analitis berdasarkan fakta lapangan.");
+              const prompt = `Data Temuan Lapangan:\n${dataText || temuanData.uraian}\n\nLakukan Analisis Akar Permasalahan (Root Cause Analysis).\n\nINSTRUKSI WAJIB:\n1. Baris pertama WAJIB menuliskan nama metode (misal: "Metode: 5 Whys").\n2. Tuliskan tahapan analisisnya secara SANGAT RINGKAS.\n3. Di bagian akhir, tarik kesimpulan "Akar Masalah Utama" dalam maksimal 1-2 kalimat padat yang langsung pada intinya.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah analis sistem manajemen. Lakukan RCA secara ringkas, logis, dan langsung pada esensi masalah.");
               setTemuanData(prev => ({ ...prev, akarMasalah: result.trim() }));
               triggerResizeAllTextareas();
             } catch (error) {
@@ -536,8 +536,8 @@
             if (!temuanData.akarMasalah && !temuanData.uraian) return alert("Silakan isi 'Analisis Akar Permasalahan' terlebih dahulu agar AI memiliki konteks.");
             setIsGeneratingPerbaikan(true);
             try {
-              const prompt = `Uraian Masalah: ${temuanData.uraian}\nAkar Masalah: ${temuanData.akarMasalah}\n\nBerdasarkan Akar Masalah di atas, buatlah rencana "Tindakan Perbaikan" (Corrective Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan korektif jangka pendek.\n2. Sajikan dalam format *bullet points*.\n3. Berikan usulan indikasi/target 'Waktu Penyelesaian' secara realistis.`;
-              const result = await generateNarrativeWithAI(prompt, "Kamu adalah konsultan mutu manajemen. Rancang rencana tindakan korektif yang praktis, aplikatif, dan langsung menyasar akar masalah.");
+              const prompt = `Uraian Masalah: ${temuanData.uraian}\nAkar Masalah: ${temuanData.akarMasalah}\n\nBerdasarkan Akar Masalah di atas, buatlah rencana "Tindakan Perbaikan" (Corrective Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan korektif jangka pendek.\n2. Sajikan dalam format *bullet points* yang SANGAT RINGKAS dan mudah dipahami.\n3. Berikan usulan indikasi/target 'Waktu Penyelesaian'.\n4. Jangan gunakan kalimat pengantar panjang.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu konsultan mutu. Rancang tindakan korektif yang praktis, ringkas, dan langsung menyasar akar masalah.");
               setTemuanData(prev => ({ ...prev, tindakanPerbaikan: result.trim() }));
               triggerResizeAllTextareas();
             } catch (error) {
@@ -552,8 +552,8 @@
             if (!temuanData.akarMasalah) return alert("Silakan isi atau generate 'Analisis Akar Permasalahan' terlebih dahulu.");
             setIsGeneratingPencegahan(true);
             try {
-              const prompt = `Akar Masalah: ${temuanData.akarMasalah}\nTindakan Perbaikan: ${temuanData.tindakanPerbaikan}\n\nBerdasarkan Akar Masalah dan Perbaikan di atas, buatlah rencana "Tindakan Pencegahan" (Preventive Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan jangka panjang (misal: SOP baru, pelatihan, monitoring).\n2. Sajikan dalam format *bullet points*.`;
-              const result = await generateNarrativeWithAI(prompt, "Kamu adalah konsultan mutu manajemen. Rancang tindakan preventif/pencegahan jangka panjang yang sistemik.");
+              const prompt = `Akar Masalah: ${temuanData.akarMasalah}\nTindakan Perbaikan: ${temuanData.tindakanPerbaikan}\n\nBerdasarkan Akar Masalah dan Perbaikan di atas, buatlah rencana "Tindakan Pencegahan" (Preventive Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan jangka panjang (misal: SOP, pelatihan).\n2. Sajikan dalam format *bullet points* yang SANGAT RINGKAS dan jelas.\n3. JANGAN bertele-tele.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu konsultan mutu. Rancang tindakan preventif jangka panjang secara ringkas dan sistemik.");
               setTemuanData(prev => ({ ...prev, tindakanPencegahan: result.trim() }));
               triggerResizeAllTextareas();
             } catch (error) {
@@ -566,11 +566,23 @@
 
           const handleAuditPlanUpload = async (e) => {
             const file = e.target.files[0];
-            if (file && file.type === 'application/pdf') {
+            if (file) {
               setAuditPlanFile(file);
               setIsExtractingPlan(true); 
               try {
-                const pdfText = await extractTextFromPdf(file);
+                let textToAnalyze = '';
+                if (file.type === 'application/pdf') {
+                    textToAnalyze = await extractTextFromPdf(file);
+                } else if (file.type === 'text/plain' || file.name.endsWith('.txt')) {
+                    textToAnalyze = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = (ev) => resolve(ev.target.result);
+                        reader.onerror = () => reject(new Error("Gagal membaca file TXT"));
+                        reader.readAsText(file);
+                    });
+                } else {
+                    throw new Error("Harap unggah file PDF atau TXT.");
+                }
                 
                 // MENGGUNAKAN GLOBAL callGeminiAPI UNTUK ROTASI OTOMATIS
                 const schema = {
@@ -584,10 +596,10 @@
                 };
 
                 const extractedData = await callGeminiAPI(
-                    `Tarik data dari tabel Rincian Kegiatan Audit (Audit Plan) berikut untuk mengisi form temuan. Ekstrak 'Unit/Tujuan', 'Sasaran Audit', 'Standar/Kriteria yang menjadi acuan', centang 'Metode' yang disebutkan, SIMPULKAN nama 'Unit Kerja'-nya, serta tarik nama 'Tim Auditor' dan 'Auditee' jika ada informasinya.\n\nTeks Dokumen:\n\n${pdfText}`,
+                    `Tarik data dari teks Rincian Kegiatan Audit (Audit Plan) berikut untuk mengisi form temuan. Ekstrak 'Unit/Tujuan', 'Sasaran Audit', 'Standar/Kriteria yang menjadi acuan', centang 'Metode' yang disebutkan, SIMPULKAN nama 'Unit Kerja'-nya, serta tarik nama 'Tim Auditor' dan 'Auditee' jika ada informasinya.\n\nTeks Dokumen:\n\n${textToAnalyze}`,
                     [], false,
                     {
-                        systemInstruction: { parts: [{ text: "Kamu adalah asisten pengisi form. Analisis tabel Audit Plan dan kembalikan JSON sesuai skema." }] },
+                        systemInstruction: { parts: [{ text: "Kamu adalah asisten pengisi form. Analisis tabel/teks Audit Plan dan kembalikan JSON sesuai skema." }] },
                         generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1 }
                     }
                 );
@@ -607,12 +619,10 @@
                 }));
                 triggerResizeAllTextareas();
               } catch (err) {
-                alert("Gagal membaca atau mengekstrak isi tabel Audit Plan secara otomatis. Silakan isi form secara manual.");
+                alert("Gagal membaca atau mengekstrak isi Audit Plan secara otomatis. Silakan periksa file Anda atau isi form secara manual.");
               } finally {
                 setIsExtractingPlan(false);
               }
-            } else if (file) {
-              alert('Harap unggah dokumen Audit Plan dalam format PDF.');
             }
           };
 
@@ -887,13 +897,13 @@
                   <span className="font-semibold text-gray-700 block flex items-center gap-2 text-sm sm:text-base">
                     Dokumen Audit Plan <span className="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">AI Auto-Fill</span>
                   </span>
-                  <span className="text-[11px] sm:text-xs text-gray-500">Unggah PDF Audit Plan untuk mengisi kolom secara otomatis!</span>
+                  <span className="text-[11px] sm:text-xs text-gray-500">Unggah file Draft Audit Plan (.TXT) atau PDF untuk mengisi kolom secara otomatis!</span>
                 </div>
                 <div>
                   {!auditPlanFile && !isExtractingPlan ? (
                     <label className="flex items-center justify-center gap-2 bg-blue-600 text-white border border-blue-600 px-4 py-2 rounded-md hover:bg-blue-700 cursor-pointer transition-colors text-xs sm:text-sm font-medium shadow-sm w-full sm:w-auto">
-                      <i className="fas fa-cloud-upload-alt text-base"></i> Unggah PDF
-                      <input type="file" accept=".pdf" className="hidden" onChange={handleAuditPlanUpload} />
+                      <i className="fas fa-file-upload text-base"></i> Unggah File (TXT/PDF)
+                      <input type="file" accept=".pdf, .txt" className="hidden" onChange={handleAuditPlanUpload} />
                     </label>
                   ) : isExtractingPlan ? (
                     <div className="flex items-center gap-2 bg-yellow-50 text-yellow-700 border border-yellow-200 px-4 py-2 rounded-md text-xs sm:text-sm font-medium animate-pulse w-full sm:w-auto">
@@ -1430,6 +1440,29 @@
                 window.print();
             };
 
+            const saveAuditPlanTxt = () => {
+                if (formDataKAK.lingkupAudit.length === 0) return showAlert("Belum ada data Audit Plan.");
+                let content = `DOKUMEN AUDIT PLAN (RINCIAN KEGIATAN AUDIT)\nFaskes: ${formDataKAK.namaFaskes}\nTahun: ${formDataKAK.tahun}\n\n`;
+                formDataKAK.lingkupAudit.forEach((item, i) => {
+                    content += `TARGET ${i+1}:\n`;
+                    content += `- Unit / Sasaran Audit: ${item.program}\n`;
+                    content += `- Sasaran Audit Khusus: ${item.subKegiatan}\n`;
+                    content += `- Tujuan: Mengevaluasi masalah "${item.masalahSpesifik}"\n`;
+                    content += `- Tim Auditor: ${item.auditor.replace(/\n/g, ' ')}\n`;
+                    content += `- Standar / Kriteria Acuan: ${item.standar.replace(/\n/g, ', ')}\n`;
+                    content += `- Metode: ${item.metode}\n`;
+                    content += `- Instrumen: ${item.instrumen}\n`;
+                    content += `- Jadwal: ${item.jadwalSem1} / ${item.jadwalSem2}\n\n`;
+                });
+                const blob = new Blob([content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `Draft_AuditPlan_${formDataKAK.namaFaskes.replace(/\s+/g, '_')}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+            };
+
             return (
                 <div className="min-h-screen flex flex-col relative bg-slate-50">
                     {toastMsg && (
@@ -1636,9 +1669,14 @@
                                 <div className="max-w-7xl mx-auto flex flex-col h-[80vh] bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden no-print">
                                     <div className="bg-slate-50 px-6 py-4 border-b flex flex-col sm:flex-row sm:justify-between items-start sm:items-center gap-4">
                                         <div className="flex items-center gap-3"><div className="w-10 h-10 rounded bg-blue-100 text-blue-600 flex items-center justify-center shrink-0"><i className="fas fa-list-ul"></i></div><div><h3 className="font-bold">Rincian Kegiatan Audit (Audit Plan)</h3><p className="text-xs">Lampiran 4 Pedoman AITM (Tersinkronisasi KAK)</p></div></div>
-                                        <button type="button" onClick={handlePrint} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
-                                            <i className="fas fa-file-pdf"></i> Unduh PDF
-                                        </button>
+                                        <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                                            <button type="button" onClick={saveAuditPlanTxt} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center justify-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-slate-300'}`}>
+                                                <i className="fas fa-download"></i> Simpan Draft (.txt)
+                                            </button>
+                                            <button type="button" onClick={handlePrint} disabled={formDataKAK.lingkupAudit.length===0} className={`px-4 py-2 text-sm text-white rounded w-full sm:w-auto transition-colors flex items-center justify-center gap-2 ${formDataKAK.lingkupAudit.length>0 ? 'bg-brand-600 hover:bg-brand-700' : 'bg-slate-300'}`}>
+                                                <i className="fas fa-file-pdf"></i> Unduh PDF
+                                            </button>
+                                        </div>
                                     </div>
                                     <div className="p-4 overflow-y-auto flex-1">
                                         {formDataKAK.lingkupAudit.length > 0 ? (
