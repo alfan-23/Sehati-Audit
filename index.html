@@ -165,7 +165,7 @@
         };
 
         // --- SISTEM PUSAT AI DENGAN EXPONENTIAL BACKOFF & ERROR HANDLING (Terhubung Dashboard) ---
-        const callGeminiAPI = async (textPrompt, additionalParts = [], useSearch = false) => {
+        const callGeminiAPI = async (textPrompt, additionalParts = [], useSearch = false, options = {}) => {
             if (!apiKey) {
                 throw new Error("API Key belum terhubung dari Dashboard.");
             }
@@ -175,6 +175,9 @@
             const parts = [{ text: textPrompt }, ...additionalParts];
             const body = { contents: [{ parts }] };
             if (useSearch) body.tools = [{ google_search: {} }];
+            
+            if (options.systemInstruction) body.systemInstruction = options.systemInstruction;
+            if (options.generationConfig) body.generationConfig = options.generationConfig;
 
             const delays = [1000, 2000, 4000, 8000, 16000];
             let lastError = null;
@@ -209,7 +212,16 @@
                     }
 
                     if (data.candidates && data.candidates[0]) {
-                        return data.candidates[0].content?.parts?.[0]?.text || "";
+                        const responseText = data.candidates[0].content?.parts?.[0]?.text || "";
+                        // Parsing khusus jika output JSON diminta
+                        if (options.generationConfig && options.generationConfig.responseMimeType === "application/json") {
+                            try { 
+                                return JSON.parse(responseText); 
+                            } catch (e) { 
+                                return JSON.parse(responseText.replace(/```json/g, '').replace(/```/g, '').trim()); 
+                            }
+                        }
+                        return responseText;
                     }
                     
                     throw new Error("Format respons tidak dikenali dari AI. Silakan coba lagi.");
@@ -230,12 +242,873 @@
             throw new Error(`Gagal memuat AI setelah beberapa percobaan: ${lastError?.message || 'Tidak diketahui'}`);
         };
 
+        // --- KOMPONEN PELAKSANAAN (Tahap 2) ---
+        const PelaksanaanMenu = () => {
+          // State manajemen: upload -> extracting -> analyzing -> form | error
+          const [appState, setAppState] = useState('upload'); 
+          const [fileName, setFileName] = useState('');
+          const [errorMessage, setErrorMessage] = useState('');
+          
+          // Tab Management ('instrumen' | 'temuan')
+          const [activeTab, setActiveTab] = useState('instrumen');
+
+          // --- STATE DATA INSTRUMEN (TAB 1) ---
+          const [instrumentSchema, setInstrumentSchema] = useState(null);
+          const [formData, setFormData] = useState({
+            metadata: { auditor: '', tanggal: '', lokasi: '' },
+            answers: {} 
+          });
+
+          // --- STATE DATA TEMUAN AUDIT (TAB 2) ---
+          const [temuanData, setTemuanData] = useState({
+            proses: '', unit: '', kriteria: '', uraian: '', bukti: '',
+            metodeWawancara: false, metodeDokumen: false, metodeObservasi: false, metodeSimulasi: false,
+            akarMasalah: '', tindakanPerbaikan: '', tindakanPencegahan: '',
+            unitKerja: '', timAudit: '', auditee: '', tanggalTemuan: '', verifikasi: ''
+          });
+          
+          const [auditPlanFile, setAuditPlanFile] = useState(null);
+          const [isExtractingPlan, setIsExtractingPlan] = useState(false); 
+
+          // State loading untuk tombol AI
+          const [isGeneratingUraian, setIsGeneratingUraian] = useState(false);
+          const [isGeneratingBukti, setIsGeneratingBukti] = useState(false);
+          const [isGeneratingAkar, setIsGeneratingAkar] = useState(false);
+          const [isGeneratingPerbaikan, setIsGeneratingPerbaikan] = useState(false);
+          const [isGeneratingPencegahan, setIsGeneratingPencegahan] = useState(false);
+
+          // State khusus loading Unduh PDF Data-Driven
+          const [isPdfGenerating, setIsPdfGenerating] = useState(false);
+
+          useEffect(() => {
+            // 1. Muat PDF.js untuk ekstraksi teks dari PDF Upload
+            const loadPdfJs = () => {
+              if (!window.pdfjsLib && !document.querySelector('script[src*="pdf.min.js"]')) {
+                const script = document.createElement('script');
+                script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+                script.onload = () => {
+                  window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+                };
+                document.head.appendChild(script);
+              }
+            };
+            
+            // 2. Muat jsPDF dan jsPDF-AutoTable untuk membuat File PDF Teks (Ringan & Support Ponsel)
+            const loadJsPdf = () => {
+              if (!window.jspdf && !document.querySelector('script[src*="jspdf.umd.min.js"]')) {
+                const scriptJsPdf = document.createElement('script');
+                scriptJsPdf.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+                scriptJsPdf.onload = () => {
+                   // Setelah jsPDF dimuat, muat plugin AutoTable
+                   const scriptAutoTable = document.createElement('script');
+                   scriptAutoTable.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.1/jspdf.plugin.autotable.min.js';
+                   document.head.appendChild(scriptAutoTable);
+                }
+                document.head.appendChild(scriptJsPdf);
+              }
+            };
+
+            loadPdfJs();
+            loadJsPdf();
+          }, []);
+
+          const extractTextFromPdf = async (file) => {
+            if (!window.pdfjsLib) throw new Error("Library PDF belum siap, silakan coba beberapa detik lagi.");
+            const arrayBuffer = await file.arrayBuffer();
+            const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+            let fullText = '';
+            for (let i = 1; i <= pdf.numPages; i++) {
+              const page = await pdf.getPage(i);
+              const textContent = await page.getTextContent();
+              const pageText = textContent.items.map(item => item.str).join(' ');
+              fullText += pageText + '\n';
+            }
+            return fullText;
+          };
+
+          const processFile = async (file) => {
+            if (!file) return;
+            try {
+              setFileName(file.name);
+              setAppState('extracting'); 
+              let documentText = '';
+
+              if (file.type === 'application/pdf') {
+                documentText = await extractTextFromPdf(file);
+              } else if (file.type === 'text/plain' || file.name.endsWith('.txt') || file.name.endsWith('.md')) {
+                documentText = await new Promise((resolve, reject) => {
+                  const reader = new FileReader();
+                  reader.onload = (e) => resolve(e.target.result);
+                  reader.onerror = (e) => reject(new Error("Gagal membaca file teks."));
+                  reader.readAsText(file);
+                });
+              } else {
+                throw new Error("Format file tidak didukung. Harap unggah file TXT, MD, atau PDF.");
+              }
+
+              if (!documentText || documentText.trim() === '') throw new Error("File kosong atau tidak dapat dibaca.");
+
+              setAppState('analyzing');
+              
+              // MENGGUNAKAN GLOBAL callGeminiAPI UNTUK ROTASI OTOMATIS
+              const schema = {
+                  type: "OBJECT",
+                  properties: {
+                    title: { type: "STRING" }, subtitle: { type: "STRING" },
+                    unit: { type: "STRING" }, fokus: { type: "STRING" },
+                    sections: {
+                      type: "ARRAY",
+                      items: {
+                        type: "OBJECT",
+                        properties: {
+                          id: { type: "STRING" }, title: { type: "STRING" }, type: { type: "STRING", description: "'checklist' atau 'essay'" },
+                          questions: {
+                            type: "ARRAY",
+                            items: {
+                              type: "OBJECT",
+                              properties: {
+                                id: { type: "STRING" }, groupName: { type: "STRING" }, text: { type: "STRING" }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  },
+                  required: ["title", "sections"]
+              };
+
+              const aiSchema = await callGeminiAPI(
+                  `INSTRUKSI SANGAT PENTING: Ekstrak SEMUA pertanyaan dari dokumen mentah ini. JANGAN ada yang dilewatkan.\n\nTeks Dokumen:\n\n${documentText}`,
+                  [], false,
+                  {
+                      systemInstruction: { parts: [{ text: "Kamu adalah sistem otomatisasi formulir. Ekstrak butir soal ke dalam array 'questions'." }] },
+                      generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1 }
+                  }
+              );
+              
+              setInstrumentSchema(aiSchema);
+              setFormData(prev => ({
+                ...prev,
+                metadata: { ...prev.metadata, lokasi: aiSchema.subtitle || 'Lokasi Audit' }
+              }));
+              setAppState('form');
+            } catch (error) {
+              console.error(error);
+              if (error.message === "API_FAIL_ROTATE") {
+                  setErrorMessage("Kuota API Habis. Dashboard sedang merotasi Key. Silakan coba kembali sesaat lagi.");
+              } else {
+                  setErrorMessage(error.message);
+              }
+              setAppState('error');
+            }
+          };
+
+          const handleFileUpload = (e) => processFile(e.target.files[0]);
+          const handleDrop = (e) => { e.preventDefault(); processFile(e.dataTransfer.files[0]); };
+          const handleDragOver = (e) => e.preventDefault();
+
+          const resetApp = () => {
+            setAppState('upload');
+            setFileName('');
+            setErrorMessage('');
+            setInstrumentSchema(null);
+            setFormData({ metadata: { auditor: '', tanggal: '', lokasi: '' }, answers: {} });
+          };
+
+          const handleMetadataChange = (e) => {
+            const { name, value } = e.target;
+            setFormData(prev => ({ ...prev, metadata: { ...prev.metadata, [name]: value } }));
+          };
+
+          const autoResizeTextarea = (element) => {
+            if (element && element.tagName === 'TEXTAREA') {
+              element.style.height = 'auto';
+              element.style.height = element.scrollHeight + 'px';
+            }
+          };
+
+          const handleAnswerChange = (itemId, field, value, e) => {
+            setFormData(prev => ({
+              ...prev, answers: { ...prev.answers, [itemId]: { ...(prev.answers[itemId] || {}), [field]: value } }
+            }));
+            if(e) autoResizeTextarea(e.target);
+          };
+
+          const handleTemuanChange = (e) => {
+            const { name, value, type, checked } = e.target;
+            setTemuanData(prev => ({ ...prev, [name]: type === 'checkbox' ? checked : value }));
+            autoResizeTextarea(e.target);
+          };
+
+          const prepareInstrumentData = () => {
+            let text = "HASIL PENGISIAN INSTRUMEN AUDIT (Fokus pada temuan negatif / ketidaksesuaian):\n\n";
+            let hasData = false;
+            
+            if (instrumentSchema && instrumentSchema.sections) {
+              instrumentSchema.sections.forEach(sec => {
+                if (sec.questions) {
+                  sec.questions.forEach(q => {
+                    const ans = formData.answers[q.id];
+                    if (ans && (ans.status === 'tidak' || (ans.jawaban && ans.jawaban.length > 5))) {
+                      hasData = true;
+                      text += `- Aspek/Pertanyaan: ${q.text}\n`;
+                      if (ans.status === 'tidak') text += `  Status: TIDAK SESUAI / BELUM ADA\n`;
+                      if (ans.keterangan) text += `  Catatan/Fakta Temuan Auditor: "${ans.keterangan}"\n`;
+                      if (ans.jawaban) text += `  Hasil Wawancara/Fakta Lapangan: "${ans.jawaban}"\n`;
+                      text += `\n`;
+                    }
+                  });
+                }
+              });
+            }
+            return hasData ? text : null;
+          };
+
+          const generateNarrativeWithAI = async (promptText, systemInstruction) => {
+              // MENGGUNAKAN GLOBAL callGeminiAPI AGAR ROTASI DASHBOARD BERJALAN
+              return await callGeminiAPI(promptText, [], false, {
+                  systemInstruction: { parts: [{ text: systemInstruction }] }
+              });
+          };
+
+          const triggerResizeAllTextareas = () => {
+            setTimeout(() => {
+              document.querySelectorAll('textarea').forEach(textarea => {
+                textarea.style.height = 'auto';
+                textarea.style.height = textarea.scrollHeight + 'px';
+              });
+            }, 100);
+          };
+
+          const handleGenerateUraian = async () => {
+            const dataText = prepareInstrumentData();
+            if (!dataText) return alert("Silakan isi dulu instrumen audit di Tab 1 dengan memilih 'Tidak / Belum' atau mengisi catatan lapangan.");
+            setIsGeneratingUraian(true);
+            try {
+              const prompt = `${dataText}\n\nBerdasarkan hasil pengisian instrumen di atas, buatlah narasi "Uraian Ketidaksesuaian" yang ringkas.\n\nINSTRUKSI WAJIB: \n1. Tarik kesimpulan HANYA dari poin-poin yang bermasalah.\n2. Kamu WAJIB menyertakan inti dari 'Catatan/Fakta Temuan Auditor' atau 'Hasil Wawancara'.\n3. Jangan mengarang informasi di luar data teks di atas.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal puskesmas yang kritis, lugas, dan teliti.");
+              setTemuanData(prev => ({ ...prev, uraian: result.trim() }));
+              triggerResizeAllTextareas();
+            } catch (error) {
+              if (error.message === "API_FAIL_ROTATE") alert("⏳ Kuota API limit. Dashboard sedang merotasi Key. Silakan tunggu beberapa detik dan coba klik lagi.");
+              else alert("Gagal menggenerate uraian ketidaksesuaian. Silakan coba lagi.");
+            } finally {
+              setIsGeneratingUraian(false);
+            }
+          };
+
+          const handleGenerateBukti = async () => {
+            const dataText = prepareInstrumentData();
+            if (!dataText) return alert("Silakan isi catatan keterangan/bukti pada instrumen di Tab 1 terlebih dahulu.");
+            setIsGeneratingBukti(true);
+            try {
+              const prompt = `${dataText}\n\nSebutkan "Bukti - Bukti Obyektif" yang mendukung ketidaksesuaian tersebut.\n\nINSTRUKSI WAJIB:\n1. Sajikan menggunakan format poin-poin (bullet points).\n2. Kamu WAJIB menuliskan secara persis fakta yang tertera pada 'Catatan/Fakta Temuan Auditor' atau 'Hasil Wawancara'.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah auditor internal puskesmas. Tuliskan ringkasan bukti objektif secara faktual.");
+              setTemuanData(prev => ({ ...prev, bukti: result.trim() }));
+              triggerResizeAllTextareas();
+            } catch (error) {
+              if (error.message === "API_FAIL_ROTATE") alert("⏳ Kuota API limit. Dashboard sedang merotasi Key. Silakan tunggu beberapa detik dan coba klik lagi.");
+              else alert("Gagal menggenerate bukti obyektif. Silakan coba lagi.");
+            } finally {
+              setIsGeneratingBukti(false);
+            }
+          };
+
+          const handleGenerateAkar = async () => {
+            const dataText = prepareInstrumentData();
+            if (!dataText && !temuanData.uraian) return alert("Tidak ada data temuan. Silakan isi form Uraian Ketidaksesuaian terlebih dahulu.");
+            setIsGeneratingAkar(true);
+            try {
+              const prompt = `Data Temuan Lapangan:\n${dataText || temuanData.uraian}\n\nLakukan Analisis Akar Permasalahan (Root Cause Analysis).\n\nINSTRUKSI WAJIB:\n1. Baris pertama WAJIB menuliskan eksplisit metode yang kamu gunakan (misal: "Metode Analisis: 5 Whys" atau "Metode Analisis: Fishbone Diagram").\n2. Tuliskan tahapan analisisnya secara runut.\n3. Di bagian akhir, tarik kesimpulan "Akar Masalah Utama" dalam 1 kalimat padat.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah analis sistem manajemen mutu. Lakukan RCA secara terstruktur, logis, dan analitis berdasarkan fakta lapangan.");
+              setTemuanData(prev => ({ ...prev, akarMasalah: result.trim() }));
+              triggerResizeAllTextareas();
+            } catch (error) {
+              if (error.message === "API_FAIL_ROTATE") alert("⏳ Kuota API limit. Dashboard sedang merotasi Key. Silakan tunggu beberapa detik dan coba klik lagi.");
+              else alert("Gagal melakukan analisis akar masalah.");
+            } finally {
+              setIsGeneratingAkar(false);
+            }
+          };
+
+          const handleGeneratePerbaikan = async () => {
+            if (!temuanData.akarMasalah && !temuanData.uraian) return alert("Silakan isi 'Analisis Akar Permasalahan' terlebih dahulu agar AI memiliki konteks.");
+            setIsGeneratingPerbaikan(true);
+            try {
+              const prompt = `Uraian Masalah: ${temuanData.uraian}\nAkar Masalah: ${temuanData.akarMasalah}\n\nBerdasarkan Akar Masalah di atas, buatlah rencana "Tindakan Perbaikan" (Corrective Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan korektif jangka pendek.\n2. Sajikan dalam format *bullet points*.\n3. Berikan usulan indikasi/target 'Waktu Penyelesaian' secara realistis.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah konsultan mutu manajemen. Rancang rencana tindakan korektif yang praktis, aplikatif, dan langsung menyasar akar masalah.");
+              setTemuanData(prev => ({ ...prev, tindakanPerbaikan: result.trim() }));
+              triggerResizeAllTextareas();
+            } catch (error) {
+              if (error.message === "API_FAIL_ROTATE") alert("⏳ Kuota API limit. Dashboard sedang merotasi Key. Silakan tunggu beberapa detik dan coba klik lagi.");
+              else alert("Gagal merumuskan tindakan perbaikan.");
+            } finally {
+              setIsGeneratingPerbaikan(false);
+            }
+          };
+
+          const handleGeneratePencegahan = async () => {
+            if (!temuanData.akarMasalah) return alert("Silakan isi atau generate 'Analisis Akar Permasalahan' terlebih dahulu.");
+            setIsGeneratingPencegahan(true);
+            try {
+              const prompt = `Akar Masalah: ${temuanData.akarMasalah}\nTindakan Perbaikan: ${temuanData.tindakanPerbaikan}\n\nBerdasarkan Akar Masalah dan Perbaikan di atas, buatlah rencana "Tindakan Pencegahan" (Preventive Action).\n\nINSTRUKSI WAJIB:\n1. Fokus pada tindakan jangka panjang (misal: SOP baru, pelatihan, monitoring).\n2. Sajikan dalam format *bullet points*.`;
+              const result = await generateNarrativeWithAI(prompt, "Kamu adalah konsultan mutu manajemen. Rancang tindakan preventif/pencegahan jangka panjang yang sistemik.");
+              setTemuanData(prev => ({ ...prev, tindakanPencegahan: result.trim() }));
+              triggerResizeAllTextareas();
+            } catch (error) {
+              if (error.message === "API_FAIL_ROTATE") alert("⏳ Kuota API limit. Dashboard sedang merotasi Key. Silakan tunggu beberapa detik dan coba klik lagi.");
+              else alert("Gagal merumuskan tindakan pencegahan.");
+            } finally {
+              setIsGeneratingPencegahan(false);
+            }
+          };
+
+          const handleAuditPlanUpload = async (e) => {
+            const file = e.target.files[0];
+            if (file && file.type === 'application/pdf') {
+              setAuditPlanFile(file);
+              setIsExtractingPlan(true); 
+              try {
+                const pdfText = await extractTextFromPdf(file);
+                
+                // MENGGUNAKAN GLOBAL callGeminiAPI UNTUK ROTASI OTOMATIS
+                const schema = {
+                  type: "OBJECT",
+                  properties: {
+                    proses: { type: "STRING" }, unit: { type: "STRING" }, kriteria: { type: "STRING" },
+                    unitKerja: { type: "STRING" }, timAudit: { type: "STRING" }, auditee: { type: "STRING" },
+                    metodeWawancara: { type: "BOOLEAN" }, metodeDokumen: { type: "BOOLEAN" },
+                    metodeObservasi: { type: "BOOLEAN" }, metodeSimulasi: { type: "BOOLEAN" }
+                  }
+                };
+
+                const extractedData = await callGeminiAPI(
+                    `Tarik data dari tabel Rincian Kegiatan Audit (Audit Plan) berikut untuk mengisi form temuan. Ekstrak 'Unit/Tujuan', 'Sasaran Audit', 'Standar/Kriteria yang menjadi acuan', centang 'Metode' yang disebutkan, SIMPULKAN nama 'Unit Kerja'-nya, serta tarik nama 'Tim Auditor' dan 'Auditee' jika ada informasinya.\n\nTeks Dokumen:\n\n${pdfText}`,
+                    [], false,
+                    {
+                        systemInstruction: { parts: [{ text: "Kamu adalah asisten pengisi form. Analisis tabel Audit Plan dan kembalikan JSON sesuai skema." }] },
+                        generationConfig: { responseMimeType: "application/json", responseSchema: schema, temperature: 0.1 }
+                    }
+                );
+
+                setTemuanData(prev => ({
+                  ...prev,
+                  proses: extractedData.proses || prev.proses,
+                  unit: extractedData.unit || prev.unit,
+                  kriteria: extractedData.kriteria || prev.kriteria,
+                  unitKerja: extractedData.unitKerja || extractedData.unit || prev.unitKerja, 
+                  timAudit: extractedData.timAudit || prev.timAudit, 
+                  auditee: extractedData.auditee || prev.auditee, 
+                  metodeWawancara: extractedData.metodeWawancara || prev.metodeWawancara,
+                  metodeDokumen: extractedData.metodeDokumen || prev.metodeDokumen,
+                  metodeObservasi: extractedData.metodeObservasi || prev.metodeObservasi,
+                  metodeSimulasi: extractedData.metodeSimulasi || prev.metodeSimulasi
+                }));
+                triggerResizeAllTextareas();
+              } catch (err) {
+                alert("Gagal membaca atau mengekstrak isi tabel Audit Plan secara otomatis. Silakan isi form secara manual.");
+              } finally {
+                setIsExtractingPlan(false);
+              }
+            } else if (file) {
+              alert('Harap unggah dokumen Audit Plan dalam format PDF.');
+            }
+          };
+
+          const handleDownloadPDF = () => {
+            if (!window.jspdf || !window.jspdf.jsPDF) {
+              alert("Menunggu library PDF siap...");
+              return;
+            }
+
+            setIsPdfGenerating(true);
+
+            try {
+              const { jsPDF } = window.jspdf;
+
+              if (activeTab === 'temuan') {
+                const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+                
+                doc.setFontSize(11);
+                doc.setFont("helvetica", "bold");
+                doc.text("Temuan Audit dan Rencana Tindak Lanjut Bentuk Vertikal", 14, 15);
+
+                let metodeArr = [];
+                if(temuanData.metodeWawancara) metodeArr.push("[v] Wawancara"); else metodeArr.push("[ ] Wawancara");
+                if(temuanData.metodeDokumen) metodeArr.push("[v] Periksa dokumen/rekaman"); else metodeArr.push("[ ] Periksa dokumen/rekaman");
+                if(temuanData.metodeObservasi) metodeArr.push("[v] Observasi Lapangan"); else metodeArr.push("[ ] Observasi Lapangan");
+                if(temuanData.metodeSimulasi) metodeArr.push("[v] Simulasi"); else metodeArr.push("[ ] Simulasi");
+                const metodeText = metodeArr.join('\n');
+
+                doc.autoTable({
+                  startY: 20,
+                  theme: 'grid',
+                  styles: { fontSize: 9, font: "helvetica", textColor: [0, 0, 0], lineColor: [0, 0, 0], lineWidth: 0.3 },
+                  headStyles: { fillColor: [213, 235, 209], textColor: [0, 0, 0], fontStyle: 'bold' },
+                  body: [
+                    [ { content: `Proses:\n${temuanData.proses}`, colSpan: 1 }, { content: `UNIT:\n${temuanData.unit}`, colSpan: 2 } ],
+                    [ { content: "Kriteria Audit", fontStyle: 'bold', colSpan: 1 }, { content: temuanData.kriteria, colSpan: 2 } ],
+                    
+                    [ { content: "Bagian I : Rincian ketidaksesuaian", colSpan: 3, styles: { fillColor: [213, 235, 209], fontStyle: 'bold' } } ],
+                    [ { content: "Uraian Ketidaksesuaian", fontStyle: 'bold' }, { content: "Bukti – Bukti Obyektif", fontStyle: 'bold' }, { content: "Metode Audit", fontStyle: 'bold' } ],
+                    [ { content: temuanData.uraian }, { content: temuanData.bukti }, { content: metodeText } ],
+
+                    [ { content: "Bagian 2: Rencana tindak lanjut dari analisis akar permasalahan, tindakan koreksi dan perbaikan dengan waktu penyelesaian", colSpan: 3, styles: { fillColor: [213, 235, 209], fontStyle: 'bold' } } ],
+                    [ { content: "Analisis Akar Permasalahan (Bagaimana/Mengapa hal ini bisa terjadi?)\n\n" + temuanData.akarMasalah, colSpan: 3 } ],
+                    [ { content: "Tindakan perbaikan dan waktu penyelesaian:\n\n" + temuanData.tindakanPerbaikan, colSpan: 3 } ],
+                    [ { content: "Tindakan pencegahan (untuk masalah yang berpotensi terjadi):\n\n" + temuanData.tindakanPencegahan, colSpan: 3 } ],
+                    
+                    [
+                      { content: `Unit kerja:\n\n\n\n\n${temuanData.unitKerja}`, styles: { halign: 'center', valign: 'middle', fillColor: [238, 245, 237] } },
+                      { content: `Tim audit internal:\n\n\n\n${temuanData.timAudit}\n\nTanggal: ${temuanData.tanggalTemuan}`, styles: { halign: 'center', valign: 'middle', fillColor: [238, 245, 237] } },
+                      { content: `Audit (Auditee):\n\n\n\n\n${temuanData.auditee}`, styles: { halign: 'center', valign: 'middle', fillColor: [238, 245, 237] } }
+                    ],
+
+                    [ { content: "Bagian 3 : Verifikasi Tim audit internal tentang rencana kegiatan :", colSpan: 3, styles: { fillColor: [213, 235, 209], fontStyle: 'bold' } } ],
+                    [ { content: temuanData.verifikasi, colSpan: 3, minCellHeight: 20 } ]
+                  ],
+                  columnStyles: {
+                    0: { cellWidth: '33%' },
+                    1: { cellWidth: '33%' },
+                    2: { cellWidth: '33%' }
+                  }
+                });
+
+                doc.save("Form_Temuan_Audit.pdf");
+
+              } else {
+                const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+                
+                doc.setFontSize(14);
+                doc.setFont("helvetica", "bold");
+                doc.text(instrumentSchema?.title || 'Instrumen Audit', 14, 20);
+                
+                doc.setFontSize(10);
+                doc.setFont("helvetica", "normal");
+                doc.text(`Unit/Kegiatan: ${instrumentSchema?.unit || '-'}`, 14, 28);
+                doc.text(`Auditor: ${formData.metadata.auditor} | Tanggal: ${formData.metadata.tanggal}`, 14, 34);
+
+                let finalBody = [];
+                
+                if (instrumentSchema && instrumentSchema.sections) {
+                  instrumentSchema.sections.forEach(sec => {
+                    finalBody.push([{ content: sec.title, colSpan: 3, styles: { fillColor: [41, 128, 185], textColor: [255, 255, 255], fontStyle: 'bold' } }]);
+                    
+                    if (sec.questions) {
+                       sec.questions.forEach((q, index) => {
+                         const isNewGroup = index === 0 || q.groupName !== sec.questions[index - 1].groupName;
+                         if (isNewGroup && q.groupName && q.groupName !== 'Daftar Pertanyaan') {
+                            finalBody.push([{ content: q.groupName, colSpan: 3, styles: { fillColor: [230, 230, 230], fontStyle: 'bold' } }]);
+                         }
+
+                         const ans = formData.answers[q.id] || {};
+                         const sectionType = sec.type?.toLowerCase() === 'checklist' ? 'checklist' : 'essay';
+                         
+                         let statusText = "-";
+                         if (sectionType === 'checklist') {
+                           if (ans.status === 'ya') statusText = "Sesuai";
+                           else if (ans.status === 'tidak') statusText = "TIDAK";
+                         }
+
+                         let ketAtauJawaban = sectionType === 'checklist' ? (ans.keterangan || "") : (ans.jawaban || "");
+
+                         finalBody.push([
+                           { content: `${index + 1}. ${q.text}` },
+                           { content: sectionType === 'checklist' ? statusText : 'Essay', styles: { halign: 'center', fontStyle: statusText === 'TIDAK' ? 'bold' : 'normal', textColor: statusText === 'TIDAK' ? [200, 0, 0] : [0,0,0] } },
+                           { content: ketAtauJawaban }
+                         ]);
+                       });
+                    }
+                  });
+                }
+
+                doc.autoTable({
+                  startY: 40,
+                  head: [['Aspek / Pertanyaan', 'Status', 'Catatan / Jawaban']],
+                  body: finalBody,
+                  theme: 'grid',
+                  styles: { fontSize: 9, cellPadding: 3 },
+                  headStyles: { fillColor: [52, 73, 94] },
+                  columnStyles: {
+                    0: { cellWidth: '55%' },
+                    1: { cellWidth: '15%' },
+                    2: { cellWidth: '30%' }
+                  }
+                });
+
+                doc.save("Hasil_Instrumen_Audit.pdf");
+              }
+              
+            } catch (error) {
+              console.error("Gagal mendownload PDF", error);
+              alert("Terjadi kesalahan saat membuat file PDF.");
+            } finally {
+              setIsPdfGenerating(false);
+            }
+          };
+
+          const handleSubmit = (e) => {
+            e.preventDefault();
+            alert(`Data ${activeTab === 'instrumen' ? 'Instrumen Audit' : 'Temuan Audit'} berhasil disimpan!`);
+          };
+
+          const renderUploadScreen = () => (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-8 sm:p-12 text-center break-inside-avoid animate-in fade-in zoom-in-95">
+              <div className="w-16 h-16 bg-blue-100 text-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-6"><i className="fas fa-clipboard-check text-3xl"></i></div>
+              <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2">Unggah Draf Instrumen</h2>
+              <p className="text-gray-500 mb-8 text-sm sm:text-base">AI akan merakit formulir interaktif dari dokumen Anda. File <strong className="text-blue-600">.txt</strong> sangat disarankan.</p>
+              
+              <div onDragOver={handleDragOver} onDrop={handleDrop} className="border-2 border-dashed border-blue-200 rounded-xl p-6 sm:p-10 hover:bg-blue-50/50 transition-colors cursor-pointer relative group mx-auto max-w-xl">
+                <input type="file" accept=".pdf, .txt, .md" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                <i className="fas fa-cloud-upload-alt text-5xl text-blue-400 mx-auto mb-4 block group-hover:scale-110 transition-transform duration-300"></i>
+                <p className="text-base sm:text-lg font-medium text-gray-700">Tarik & Lepas file <strong>TXT</strong> Anda di sini</p>
+              </div>
+            </div>
+          );
+
+          const renderLoadingScreen = () => (
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-12 text-center break-inside-avoid animate-in fade-in">
+              <i className="fas fa-spinner fa-spin text-4xl text-blue-600 block mx-auto mb-6"></i>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">AI Sedang Bekerja...</h2>
+              <p className="text-gray-500 text-sm">Merakit formulir dari {fileName}</p>
+            </div>
+          );
+
+          const renderErrorScreen = () => (
+            <div className="bg-white rounded-2xl shadow-sm border border-red-200 p-12 text-center break-inside-avoid animate-in fade-in">
+              <i className="fas fa-exclamation-circle text-5xl text-red-500 block mx-auto mb-4"></i>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">Gagal Memproses</h2>
+              <p className="text-gray-600 text-sm mb-6">{errorMessage}</p>
+              <button onClick={resetApp} className="bg-gray-900 text-white px-6 py-2 rounded-lg hover:bg-gray-800">Coba Lagi</button>
+            </div>
+          );
+
+          const renderInstrumenTab = () => {
+            if (!instrumentSchema) return null;
+            return (
+              <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden mb-6 break-inside-avoid">
+                  <div className="h-3 bg-blue-600 w-full"></div>
+                  <div className="p-4 sm:p-8">
+                    <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 mb-2">{instrumentSchema.title || 'Formulir Audit'}</h1>
+                    {instrumentSchema.subtitle && <h2 className="text-lg sm:text-xl text-gray-600 mb-6 pb-6 border-b border-gray-200">{instrumentSchema.subtitle}</h2>}
+                    <div className="bg-gray-50 p-4 rounded-md text-sm text-gray-700">
+                      {instrumentSchema.unit && <p><strong>Unit/Kegiatan:</strong> {instrumentSchema.unit}</p>}
+                      {instrumentSchema.fokus && <p className="mt-2"><strong>Fokus:</strong> {instrumentSchema.fokus}</p>}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-8 mb-8 break-inside-avoid">
+                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2"><i className="fas fa-user text-blue-500 text-base"></i> Nama Auditor</label>
+                      <input type="text" name="auditor" required value={formData.metadata.auditor} onChange={handleMetadataChange} className="w-full border border-gray-300 rounded-md p-3 outline-none focus:border-blue-500 text-sm sm:text-base" />
+                    </div>
+                    <div>
+                      <label className="flex items-center gap-2 text-sm font-medium text-gray-700 mb-2"><i className="fas fa-calendar-alt text-blue-500 text-base"></i> Tanggal Audit</label>
+                      <input type="date" name="tanggal" required value={formData.metadata.tanggal} onChange={handleMetadataChange} className="w-full border border-gray-300 rounded-md p-3 outline-none focus:border-blue-500 text-sm sm:text-base" />
+                    </div>
+                  </div>
+                </div>
+
+                {instrumentSchema.sections?.map((section, sIndex) => {
+                  const headerColors = ['bg-blue-600', 'bg-green-600', 'bg-purple-600', 'bg-orange-600', 'bg-teal-600'];
+                  const headerColor = headerColors[sIndex % headerColors.length];
+                  const sectionType = section.type?.toLowerCase() === 'checklist' ? 'checklist' : 'essay';
+                  const hasItems = section.questions && section.questions.length > 0;
+
+                  return (
+                    <div key={section.id || sIndex} className="mb-8">
+                      <div className={`${headerColor} text-white p-4 rounded-t-lg shadow-sm mt-8`}><h2 className="text-lg sm:text-xl font-bold">{section.title}</h2></div>
+                      {!hasItems ? (
+                        <div className="bg-red-50 p-4 border border-x-red-200 border-b-red-200 text-red-600 flex items-center gap-3">
+                          <i className="fas fa-exclamation-circle text-2xl shrink-0"></i>
+                          <div><p className="font-semibold text-sm">AI gagal mengekstrak butir pertanyaan.</p></div>
+                        </div>
+                      ) : (
+                        <div className="pt-2">
+                          {section.questions.map((item, index) => {
+                            const isNewGroup = index === 0 || item.groupName !== section.questions[index - 1].groupName;
+                            const showGroup = isNewGroup && item.groupName && item.groupName.trim() !== '' && item.groupName !== 'Daftar Pertanyaan';
+
+                            return (
+                              <React.Fragment key={item.id || index}>
+                                {showGroup && (
+                                  <div className="bg-gray-100 p-4 border border-x-gray-200 mt-4 mb-4 border-l-4 border-l-gray-400">
+                                    <h3 className="font-semibold text-gray-700 text-sm sm:text-base">{item.groupName}</h3>
+                                  </div>
+                                )}
+                                <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6 mb-4 break-inside-avoid">
+                                  <p className="font-medium text-gray-800 mb-4 text-sm sm:text-base leading-relaxed">{index + 1}. {item.text}</p>
+                                  {sectionType === 'checklist' ? (
+                                    <>
+                                      <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
+                                        <label className={`flex items-center p-3 border rounded-md cursor-pointer flex-1 ${formData.answers[item.id]?.status === 'ya' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'hover:bg-gray-50'}`}>
+                                          <input type="radio" name={`status_${item.id}`} value="ya" checked={formData.answers[item.id]?.status === 'ya'} onChange={(e) => handleAnswerChange(item.id, 'status', 'ya', e)} className="w-4 h-4 text-blue-600 focus:ring-blue-500" />
+                                          <span className="ml-3 font-medium text-sm sm:text-base">Ya / Sesuai</span>
+                                        </label>
+                                        <label className={`flex items-center p-3 border rounded-md cursor-pointer flex-1 ${formData.answers[item.id]?.status === 'tidak' ? 'bg-red-50 border-red-500 text-red-700' : 'hover:bg-gray-50'}`}>
+                                          <input type="radio" name={`status_${item.id}`} value="tidak" checked={formData.answers[item.id]?.status === 'tidak'} onChange={(e) => handleAnswerChange(item.id, 'status', 'tidak', e)} className="w-4 h-4 text-red-600 focus:ring-red-500" />
+                                          <span className="ml-3 font-medium text-sm sm:text-base">Tidak / Belum</span>
+                                        </label>
+                                      </div>
+                                      <div className="mt-2">
+                                        <label className="block text-xs sm:text-sm text-gray-600 mb-1">Ket. (Bukti/Catatan):</label>
+                                        <input type="text" placeholder="Tuliskan alasan/fakta di sini jika tidak sesuai..." className="w-full border-b border-gray-300 px-0 py-2 focus:ring-0 focus:border-blue-600 outline-none placeholder:text-gray-400 text-sm sm:text-base" value={formData.answers[item.id]?.keterangan || ''} onChange={(e) => handleAnswerChange(item.id, 'keterangan', e.target.value, e)} />
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <textarea rows="3" className="w-full border border-gray-300 rounded-md p-3 focus:ring-2 focus:border-blue-500 outline-none text-sm sm:text-base resize-none overflow-hidden" value={formData.answers[item.id]?.jawaban || ''} onChange={(e) => handleAnswerChange(item.id, 'jawaban', e.target.value, e)}></textarea>
+                                  )}
+                                </div>
+                              </React.Fragment>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          };
+
+          const renderTemuanTab = () => (
+            <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 bg-white rounded-lg shadow-md border border-gray-200 overflow-hidden break-inside-avoid">
+              
+              <div className="p-4 border-b border-gray-300 bg-gray-50 text-center sm:text-left">
+                <h1 className="text-sm sm:text-[16px] font-bold text-gray-800 uppercase tracking-wide">Temuan Audit dan Rencana Tindak Lanjut Bentuk Vertikal</h1>
+              </div>
+
+              <div className="p-4 border-b border-gray-300 bg-blue-50/50 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <span className="font-semibold text-gray-700 block flex items-center gap-2 text-sm sm:text-base">
+                    Dokumen Audit Plan <span className="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">AI Auto-Fill</span>
+                  </span>
+                  <span className="text-[11px] sm:text-xs text-gray-500">Unggah PDF Audit Plan untuk mengisi kolom secara otomatis!</span>
+                </div>
+                <div>
+                  {!auditPlanFile && !isExtractingPlan ? (
+                    <label className="flex items-center justify-center gap-2 bg-blue-600 text-white border border-blue-600 px-4 py-2 rounded-md hover:bg-blue-700 cursor-pointer transition-colors text-xs sm:text-sm font-medium shadow-sm w-full sm:w-auto">
+                      <i className="fas fa-cloud-upload-alt text-base"></i> Unggah PDF
+                      <input type="file" accept=".pdf" className="hidden" onChange={handleAuditPlanUpload} />
+                    </label>
+                  ) : isExtractingPlan ? (
+                    <div className="flex items-center gap-2 bg-yellow-50 text-yellow-700 border border-yellow-200 px-4 py-2 rounded-md text-xs sm:text-sm font-medium animate-pulse w-full sm:w-auto">
+                      <i className="fas fa-spinner fa-spin text-base"></i> Ekstrak tabel...
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-3 bg-green-50 text-green-700 border border-green-200 px-4 py-2 rounded-md text-xs sm:text-sm font-medium w-full sm:w-auto">
+                      <i className="fas fa-check-circle text-base shrink-0"></i>
+                      <span className="truncate max-w-[150px] sm:max-w-[200px]">{auditPlanFile.name}</span>
+                      <button type="button" onClick={() => {setAuditPlanFile(null); setTemuanData({...temuanData, proses:'', unit:'', kriteria:'', unitKerja:'', timAudit:'', auditee:'', metodeWawancara:false, metodeDokumen:false, metodeObservasi:false, metodeSimulasi:false});}} className="text-green-800 hover:text-green-900 ml-1 p-1 rounded-full hover:bg-green-200 transition-colors shrink-0" title="Batal / Hapus">
+                        <i className="fas fa-times text-sm"></i>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-gray-300 border-b border-gray-300">
+                <div className="p-3 sm:p-4 flex gap-2 sm:gap-4 items-center">
+                  <span className="font-semibold text-gray-700 w-16 sm:w-24 text-xs sm:text-sm shrink-0">Proses</span>
+                  <textarea name="proses" value={temuanData.proses} onChange={handleTemuanChange} rows="1" className="flex-1 p-1.5 sm:p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none resize-none overflow-hidden text-xs sm:text-sm" placeholder="Misal: Perencanaan..."></textarea>
+                </div>
+                <div className="p-3 sm:p-4 flex gap-2 sm:gap-4 items-center">
+                  <span className="font-semibold text-gray-700 w-16 sm:w-24 text-xs sm:text-sm shrink-0 uppercase">UNIT</span>
+                  <textarea name="unit" value={temuanData.unit} onChange={handleTemuanChange} rows="1" className="flex-1 p-1.5 sm:p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none resize-none overflow-hidden text-xs sm:text-sm" placeholder="Misal: UKM KIA"></textarea>
+                </div>
+              </div>
+              <div className="p-3 sm:p-4 border-b border-gray-300 flex flex-col md:flex-row gap-2 md:gap-4 md:items-start">
+                <span className="font-semibold text-gray-700 w-auto md:w-32 shrink-0 md:pt-2 text-xs sm:text-sm">Kriteria Audit</span>
+                <textarea name="kriteria" value={temuanData.kriteria} onChange={handleTemuanChange} rows="2" className="flex-1 p-1.5 sm:p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none w-full resize-none overflow-hidden text-xs sm:text-sm" placeholder="Standar akreditasi yang digunakan..."></textarea>
+              </div>
+
+              <div className="bg-[#d5ebd1] border-b border-gray-300 p-2.5 sm:p-3"><h2 className="font-bold text-gray-800 text-sm sm:text-base">Bagian I : Rincian ketidaksesuaian</h2></div>
+              <div className="grid grid-cols-1 lg:grid-cols-3 divide-y lg:divide-y-0 lg:divide-x divide-gray-300 border-b border-gray-300">
+                <div className="p-3 sm:p-4 flex flex-col group relative">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-gray-700 text-xs sm:text-sm">Uraian Ketidaksesuaian</span>
+                    <button type="button" onClick={handleGenerateUraian} disabled={isGeneratingUraian} className="flex items-center gap-1 text-[10px] sm:text-[11px] bg-purple-100 text-purple-700 border border-purple-300 px-1.5 sm:px-2 py-1 rounded hover:bg-purple-200 transition-colors disabled:opacity-50 font-bold uppercase tracking-wider shadow-sm">
+                      {isGeneratingUraian ? <i className="fas fa-spinner fa-spin text-[10px]"></i> : <i className="fas fa-magic text-[10px]"></i>} AI Generate
+                    </button>
+                  </div>
+                  <textarea name="uraian" value={temuanData.uraian} onChange={handleTemuanChange} rows="4" className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 outline-none resize-none overflow-hidden text-xs sm:text-sm" placeholder="Jelaskan ketidaksesuaian yang terjadi..."></textarea>
+                </div>
+                <div className="p-3 sm:p-4 flex flex-col group relative">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-semibold text-gray-700 text-xs sm:text-sm">Bukti – Bukti Obyektif</span>
+                    <button type="button" onClick={handleGenerateBukti} disabled={isGeneratingBukti} className="flex items-center gap-1 text-[10px] sm:text-[11px] bg-purple-100 text-purple-700 border border-purple-300 px-1.5 sm:px-2 py-1 rounded hover:bg-purple-200 transition-colors disabled:opacity-50 font-bold uppercase tracking-wider shadow-sm">
+                      {isGeneratingBukti ? <i className="fas fa-spinner fa-spin text-[10px]"></i> : <i className="fas fa-magic text-[10px]"></i>} AI Generate
+                    </button>
+                  </div>
+                  <textarea name="bukti" value={temuanData.bukti} onChange={handleTemuanChange} rows="4" className="flex-1 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-purple-500 outline-none resize-none overflow-hidden text-xs sm:text-sm" placeholder="(jelaskan bukti/fakta-fakta yang mendukung)"></textarea>
+                </div>
+                <div className="p-3 sm:p-4 flex flex-col">
+                  <span className="font-semibold text-gray-700 mb-2 sm:mb-3 text-xs sm:text-sm">Metode Audit</span>
+                  <div className="grid grid-cols-2 lg:grid-cols-1 gap-2 sm:gap-3 text-xs sm:text-sm">
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="metodeWawancara" checked={temuanData.metodeWawancara} onChange={handleTemuanChange} className="w-4 h-4 text-blue-600 rounded" /><span>Wawancara</span></label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="metodeDokumen" checked={temuanData.metodeDokumen} onChange={handleTemuanChange} className="w-4 h-4 text-blue-600 rounded" /><span>Periksa dokumen</span></label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="metodeObservasi" checked={temuanData.metodeObservasi} onChange={handleTemuanChange} className="w-4 h-4 text-blue-600 rounded" /><span>Observasi</span></label>
+                    <label className="flex items-center gap-2 cursor-pointer"><input type="checkbox" name="metodeSimulasi" checked={temuanData.metodeSimulasi} onChange={handleTemuanChange} className="w-4 h-4 text-blue-600 rounded" /><span>Simulasi</span></label>
+                  </div>
+                </div>
+              </div>
+
+              <div className="bg-[#d5ebd1] border-b border-gray-300 p-2.5 sm:p-3"><h2 className="font-bold text-gray-800 text-[11px] sm:text-sm leading-tight">Bagian 2: Rencana tindak lanjut dari analisis akar permasalahan, tindakan koreksi dan perbaikan dengan waktu penyelesaian</h2></div>
+              
+              {/* Kolom Akar Masalah */}
+              <div className="p-3 sm:p-4 border-b border-gray-300 flex flex-col group relative">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 gap-2">
+                  <div>
+                    <span className="font-semibold text-gray-700 block text-xs sm:text-sm">Analisis Akar Permasalahan (Bagaimana/Mengapa hal ini bisa terjadi?)</span>
+                    <p className="text-[10px] sm:text-xs text-gray-500 italic mt-0.5">(Lakukan analisis sehingga ditemukan akar masalahnya...)</p>
+                  </div>
+                  <button type="button" onClick={handleGenerateAkar} disabled={isGeneratingAkar} className="flex items-center justify-center sm:justify-start gap-1 text-[10px] bg-red-100 text-red-700 border border-red-300 px-2 py-1.5 rounded hover:bg-red-200 transition-colors disabled:opacity-50 font-bold uppercase tracking-wider shadow-sm shrink-0 w-full sm:w-auto">
+                    {isGeneratingAkar ? <i className="fas fa-spinner fa-spin text-xs"></i> : <i className="fas fa-magic text-xs"></i>} {isGeneratingAkar ? 'Menganalisis...' : 'AI Generate'}
+                  </button>
+                </div>
+                <textarea name="akarMasalah" value={temuanData.akarMasalah} onChange={handleTemuanChange} rows="3" className="w-full p-2 sm:p-3 border border-gray-300 rounded focus:ring-2 focus:ring-red-500 outline-none resize-none overflow-hidden text-xs sm:text-sm leading-relaxed" placeholder="Analisis akar masalah..."></textarea>
+              </div>
+
+              {/* Kolom Perbaikan */}
+              <div className="p-3 sm:p-4 border-b border-gray-300 flex flex-col group relative">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 gap-2">
+                  <div>
+                    <span className="font-semibold text-gray-700 block text-xs sm:text-sm">Tindakan perbaikan dan waktu penyelesaian:</span>
+                    <p className="text-[10px] sm:text-xs text-gray-500 italic mt-0.5">(Sebutkan tindakan perbaikan yang akan dilakukan)</p>
+                  </div>
+                  <button type="button" onClick={handleGeneratePerbaikan} disabled={isGeneratingPerbaikan} className="flex items-center justify-center sm:justify-start gap-1 text-[10px] bg-green-100 text-green-700 border border-green-300 px-2 py-1.5 rounded hover:bg-green-200 transition-colors disabled:opacity-50 font-bold uppercase tracking-wider shadow-sm shrink-0 w-full sm:w-auto">
+                    {isGeneratingPerbaikan ? <i className="fas fa-spinner fa-spin text-xs"></i> : <i className="fas fa-magic text-xs"></i>} {isGeneratingPerbaikan ? 'Merumuskan...' : 'AI Generate'}
+                  </button>
+                </div>
+                <textarea name="tindakanPerbaikan" value={temuanData.tindakanPerbaikan} onChange={handleTemuanChange} rows="3" className="w-full p-2 sm:p-3 border border-gray-300 rounded focus:ring-2 focus:ring-green-500 outline-none resize-none overflow-hidden text-xs sm:text-sm leading-relaxed" placeholder="Langkah korektif jangka pendek..."></textarea>
+              </div>
+
+              {/* Kolom Pencegahan */}
+              <div className="p-3 sm:p-4 border-b border-gray-300 flex flex-col group relative">
+                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start mb-2 gap-2">
+                  <div>
+                    <span className="font-semibold text-gray-700 block text-xs sm:text-sm">Tindakan pencegahan (untuk masalah yang berpotensi terjadi):</span>
+                    <p className="text-[10px] sm:text-xs text-gray-500 italic mt-0.5">(Jelaskan upaya pencegahan yang perlu dilakukan)</p>
+                  </div>
+                  <button type="button" onClick={handleGeneratePencegahan} disabled={isGeneratingPencegahan} className="flex items-center justify-center sm:justify-start gap-1 text-[10px] bg-blue-100 text-blue-700 border border-blue-300 px-2 py-1.5 rounded hover:bg-blue-200 transition-colors disabled:opacity-50 font-bold uppercase tracking-wider shadow-sm shrink-0 w-full sm:w-auto">
+                    {isGeneratingPencegahan ? <i className="fas fa-spinner fa-spin text-xs"></i> : <i className="fas fa-magic text-xs"></i>} {isGeneratingPencegahan ? 'Merumuskan...' : 'AI Generate'}
+                  </button>
+                </div>
+                <textarea name="tindakanPencegahan" value={temuanData.tindakanPencegahan} onChange={handleTemuanChange} rows="3" className="w-full p-2 sm:p-3 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none resize-none overflow-hidden text-xs sm:text-sm leading-relaxed" placeholder="Langkah preventif jangka panjang..."></textarea>
+              </div>
+
+              {/* Tanda Tangan */}
+              <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-300 border-b border-gray-300 bg-[#eef5ed]">
+                <div className="p-3 sm:p-4 flex flex-col justify-between h-24 sm:h-32">
+                  <span className="font-semibold text-gray-700 mb-2 text-xs sm:text-sm">Unit kerja:</span>
+                  <textarea name="unitKerja" value={temuanData.unitKerja} onChange={handleTemuanChange} rows="1" className="w-full border-b border-gray-400 bg-transparent focus:outline-none focus:border-blue-600 text-center resize-none overflow-hidden text-xs sm:text-sm" placeholder="Nama Unit"></textarea>
+                </div>
+                <div className="flex flex-col">
+                  <div className="p-3 sm:p-4 flex-1 border-b border-gray-300">
+                    <span className="font-semibold text-gray-700 block mb-2 text-xs sm:text-sm">Tim audit internal:</span>
+                    <textarea name="timAudit" value={temuanData.timAudit} onChange={handleTemuanChange} rows="1" className="w-full border-b border-gray-400 bg-transparent focus:outline-none focus:border-blue-600 text-center resize-none overflow-hidden text-xs sm:text-sm" placeholder="Nama Auditor"></textarea>
+                  </div>
+                  <div className="p-2 sm:p-4 flex items-center gap-2 sm:gap-3">
+                    <span className="font-semibold text-gray-700 text-xs sm:text-sm shrink-0">Tanggal:</span>
+                    <input type="date" name="tanggalTemuan" value={temuanData.tanggalTemuan} onChange={handleTemuanChange} className="flex-1 bg-transparent border-b border-gray-400 focus:outline-none text-xs sm:text-sm" />
+                  </div>
+                </div>
+                <div className="p-3 sm:p-4 flex flex-col justify-between h-24 sm:h-32">
+                  <span className="font-semibold text-gray-700 mb-2 text-xs sm:text-sm">Audit (Auditee):</span>
+                  <textarea name="auditee" value={temuanData.auditee} onChange={handleTemuanChange} rows="1" className="w-full border-b border-gray-400 bg-transparent focus:outline-none focus:border-blue-600 text-center resize-none overflow-hidden text-xs sm:text-sm" placeholder="Nama Auditee"></textarea>
+                </div>
+              </div>
+
+              <div className="bg-[#d5ebd1] border-b border-gray-300 p-2.5 sm:p-3"><h2 className="font-bold text-gray-800 text-sm sm:text-base">Bagian 3 : Verifikasi Tim audit internal tentang rencana kegiatan :</h2></div>
+              <div className="p-3 sm:p-4">
+                <textarea name="verifikasi" value={temuanData.verifikasi} onChange={handleTemuanChange} rows="3" className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none resize-none overflow-hidden text-xs sm:text-sm" placeholder="Isi verifikasi dari tim audit..."></textarea>
+              </div>
+            </div>
+          );
+
+          return (
+            <div className="h-full bg-slate-50 py-4 sm:py-8 px-2 sm:px-4 font-sans relative overflow-y-auto w-full">
+              
+              {/* Overlay Layar Loading PDF */}
+              {isPdfGenerating && (
+                <div className="fixed inset-0 bg-white/90 backdrop-blur-sm z-50 flex flex-col items-center justify-center p-4 text-center">
+                  <i className="fas fa-spinner fa-spin text-5xl text-blue-600 mb-4 block"></i>
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-800 mb-2">Menyiapkan Berkas Unduhan...</h2>
+                  <p className="text-gray-600 text-sm sm:text-base">Membangun PDF teks native berkualitas tinggi. Ini sangat ringan dan kompatibel untuk ponsel Anda.</p>
+                </div>
+              )}
+
+              <div className="max-w-5xl mx-auto bg-transparent">
+                
+                {/* Topbar Navigasi Global */}
+                <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 mb-6">
+                  <div className="flex items-center gap-2 text-blue-600 font-bold text-lg">
+                    <i className="fas fa-clipboard-check text-2xl"></i> Form & Temuan Lapangan
+                  </div>
+                  <div className="flex gap-2 sm:gap-3 w-full sm:w-auto">
+                    {appState === 'form' && activeTab === 'instrumen' && (
+                       <button onClick={resetApp} className="flex-1 sm:flex-none flex justify-center items-center gap-2 bg-white border border-gray-300 text-gray-700 px-3 py-2 rounded-md hover:bg-gray-50 shadow-sm text-xs sm:text-sm font-medium"><i className="fas fa-arrow-left text-base shrink-0"></i> Ganti File</button>
+                    )}
+                    {/* Tombol PDF Data-Driven */}
+                    <button onClick={handleDownloadPDF} disabled={isPdfGenerating || appState === 'upload'} className="flex-1 sm:flex-none flex justify-center items-center gap-2 bg-blue-600 text-white px-3 py-2 rounded-md hover:bg-blue-700 shadow-sm text-xs sm:text-sm font-medium transition-colors disabled:opacity-50 disabled:bg-slate-400">
+                      <i className="fas fa-print text-base shrink-0"></i> Unduh PDF Teks
+                    </button>
+                  </div>
+                </div>
+
+                {/* MENU TABS */}
+                <div className="flex bg-white rounded-lg border border-gray-200 overflow-hidden mb-6 shadow-sm">
+                  <button 
+                    onClick={() => { setActiveTab('instrumen'); setTimeout(triggerResizeAllTextareas, 100); }}
+                    className={`flex-1 flex flex-col sm:flex-row justify-center items-center gap-1 sm:gap-2 py-3 px-2 sm:px-6 font-medium text-xs sm:text-sm transition-colors ${activeTab === 'instrumen' ? 'bg-blue-50 text-blue-700 border-b-2 border-blue-600' : 'text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <i className="fas fa-list-alt text-lg"></i> <span>1. Instrumen</span>
+                  </button>
+                  <button 
+                    onClick={() => { setActiveTab('temuan'); setTimeout(triggerResizeAllTextareas, 100); }}
+                    className={`flex-1 flex flex-col sm:flex-row justify-center items-center gap-1 sm:gap-2 py-3 px-2 sm:px-6 font-medium text-xs sm:text-sm transition-colors ${activeTab === 'temuan' ? 'bg-green-50 text-green-700 border-b-2 border-green-600' : 'text-gray-600 hover:bg-gray-50'}`}
+                  >
+                    <i className="fas fa-pen text-lg"></i> <span>2. Form Temuan</span>
+                  </button>
+                </div>
+
+                <form onSubmit={handleSubmit}>
+                  {activeTab === 'instrumen' && (
+                    <>
+                      {appState === 'upload' && renderUploadScreen()}
+                      {(appState === 'extracting' || appState === 'analyzing') && renderLoadingScreen()}
+                      {appState === 'error' && renderErrorScreen()}
+                      {appState === 'form' && renderInstrumenTab()}
+                    </>
+                  )}
+
+                  {activeTab === 'temuan' && renderTemuanTab()}
+
+                  {(activeTab === 'temuan' || (activeTab === 'instrumen' && appState === 'form')) && (
+                    <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-4 sm:p-6 mb-12 mt-6 flex flex-col sm:flex-row justify-between items-center gap-4 text-center sm:text-left">
+                      <span className="text-gray-500 text-xs sm:text-sm order-2 sm:order-1">Isian Anda tersimpan di memori peramban secara otomatis.</span>
+                      <button type="submit" className={`order-1 sm:order-2 flex justify-center items-center gap-2 text-white px-6 py-3 rounded-md font-medium shadow-sm transition-colors w-full sm:w-auto ${activeTab === 'instrumen' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}>
+                        <i className="fas fa-save text-xl"></i> Simpan {activeTab === 'instrumen' ? 'Instrumen' : 'Temuan'}
+                      </button>
+                    </div>
+                  )}
+
+                </form>
+              </div>
+            </div>
+          );
+        };
+
         const App = () => {
             const [activeTahap, setActiveTahap] = useState('tahap1');
             const [activeSubMenu, setActiveSubMenu] = useState('kak_komprehensif'); 
             const [toastMsg, setToastMsg] = useState('');
 
-            // State Utama Data
+            // State Utama Data Perencanaan
             const [formDataKAK, setFormDataKAK] = useState({
                 namaFaskes: 'Puskesmas XYZ', tahun: '2026', latarBelakangTerpadu: '', lingkupAudit: []
             });
@@ -972,7 +1845,10 @@
                             )}
 
                             {activeTahap === 'tahap1' && !['kak_komprehensif', 'auditplan', 'jadwal', 'instrumen'].includes(activeSubMenu) && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-tools text-5xl mb-4"></i><p>Modul dikembangkan segera.</p></div>)}
-                            {activeTahap !== 'tahap1' && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-hammer text-5xl mb-4"></i><p>Kembali ke Perencanaan.</p></div>)}
+                            
+                            {activeTahap === 'tahap2' && <PelaksanaanMenu />}
+                            
+                            {activeTahap === 'tahap3' && (<div className="h-full flex flex-col items-center justify-center text-slate-400 no-print"><i className="fas fa-hammer text-5xl mb-4"></i><p>Modul Analisis RTL sedang dikembangkan.</p></div>)}
                         </main>
                     </div>
 
